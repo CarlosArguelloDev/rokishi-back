@@ -1,6 +1,6 @@
 # Despliegue en Heroku con Jenkins
 
-Esta guia despliega la API y PostgreSQL en Heroku mediante el `Dockerfile` del repositorio. Jenkins se ejecuta en tu computadora o en un equipo que ya pagas; no se crea un dyno para Jenkins.
+Esta guia despliega la API y PostgreSQL en Heroku mediante el `Dockerfile` del repositorio. Jenkins se ejecuta en una Raspberry Pi con Ubuntu; no se crea un dyno para Jenkins.
 
 ## Presupuesto mensual
 
@@ -18,39 +18,63 @@ Cuando necesites que la API permanezca encendida, cambia el dyno a Basic. Basic 
 
 Fuentes oficiales: [precios de Heroku](https://www.heroku.com/pricing/), [horas Eco](https://devcenter.heroku.com/articles/eco-dyno-hours) y [facturacion](https://devcenter.heroku.com/articles/usage-and-billing).
 
-## 1. Requisitos del agente Jenkins
+## 1. Preparar la Raspberry Pi
 
-El equipo que ejecuta Jenkins necesita estas herramientas en su `PATH`:
+Conectate por SSH a la Raspberry y confirma su arquitectura:
+
+```bash
+uname -m
+```
+
+Lo habitual es `aarch64` o `arm64`. Heroku Container Registry solo ejecuta imagenes `x86_64`, por lo que el pipeline construye explicitamente para `linux/amd64`. El `Dockerfile` compila el binario amd64 desde el compilador nativo de la Raspberry y evita ejecutar capas amd64 durante la construccion.
+
+El agente Jenkins necesita estas herramientas:
 
 - Git.
 - Go 1.26 o posterior.
-- Docker Desktop o Docker Engine en ejecucion.
+- Docker Engine con `buildx`.
 - Heroku CLI.
 - `golang-migrate` con soporte para PostgreSQL.
+- `curl`.
 
-Instala `golang-migrate` desde PowerShell:
+Instala Docker Engine usando la [guia oficial para Ubuntu](https://docs.docker.com/engine/install/ubuntu/). Luego permite que Jenkins use Docker y reinicia el servicio:
 
-```powershell
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+```bash
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
 ```
 
-Verifica todo usando la misma cuenta de Windows que ejecuta el agente Jenkins:
+Instala Heroku CLI para Ubuntu. El instalador selecciona la compilacion ARM adecuada:
 
-```powershell
-git --version
-go version
-docker version
-heroku version
-migrate -version
+```bash
+curl https://cli-assets.heroku.com/install-ubuntu.sh | sh
 ```
 
-Si Jenkins funciona como servicio de Windows, su cuenta debe tener permiso para utilizar Docker. Una prueba en tu terminal personal no demuestra que el servicio Jenkins tenga ese acceso.
+Instala `golang-migrate` en el directorio de la cuenta Jenkins:
+
+```bash
+sudo -u jenkins -H bash -lc "go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest"
+```
+
+Verifica las herramientas **como el usuario Jenkins**, no solamente desde tu usuario SSH:
+
+```bash
+sudo -u jenkins -H git --version
+sudo -u jenkins -H go version
+sudo -u jenkins -H docker version
+sudo -u jenkins -H docker buildx version
+sudo -u jenkins -H heroku version
+sudo -u jenkins -H /var/lib/jenkins/go/bin/migrate -version
+sudo -u jenkins -H curl --version
+```
+
+Si el `HOME` real de Jenkins no es `/var/lib/jenkins`, consultalo con `getent passwd jenkins` y utiliza la ruta indicada. Ajusta tambien la llamada a `migrate` en el `Jenkinsfile`.
 
 ## 2. Crear la aplicacion y la base
 
 Inicia sesion y elige un nombre globalmente unico. Sustituye `NOMBRE_DE_LA_APP` en todos los comandos:
 
-```powershell
+```bash
 heroku login
 heroku create NOMBRE_DE_LA_APP --stack container
 heroku addons:create heroku-postgresql:essential-0 --app NOMBRE_DE_LA_APP --wait
@@ -65,13 +89,27 @@ En una cuenta personal suscrita a Eco, las aplicaciones nuevas usan Eco de forma
 
 Conviene completar un despliegue manual antes de configurar Jenkins. Asi se comprueban Docker, Heroku y la base por separado.
 
-```powershell
-heroku container:login
-heroku container:push web --app NOMBRE_DE_LA_APP
+Instala tambien `migrate` para tu usuario SSH si todavia no existe en `$HOME/go/bin`:
 
-$env:DATABASE_URL = heroku config:get DATABASE_URL --app NOMBRE_DE_LA_APP
-migrate -path .\migrations -database $env:DATABASE_URL up
-Remove-Item Env:DATABASE_URL
+```bash
+go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+```
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  --pull \
+  --load \
+  --tag rokishi-api:manual \
+  .
+
+heroku container:login
+docker tag rokishi-api:manual registry.heroku.com/NOMBRE_DE_LA_APP/web
+docker push registry.heroku.com/NOMBRE_DE_LA_APP/web
+
+database_url="$(heroku config:get DATABASE_URL --app NOMBRE_DE_LA_APP)"
+$HOME/go/bin/migrate -path ./migrations -database "$database_url" up
+unset database_url
 
 heroku container:release web --app NOMBRE_DE_LA_APP
 heroku ps:scale web=1 --app NOMBRE_DE_LA_APP
@@ -79,8 +117,8 @@ heroku ps:scale web=1 --app NOMBRE_DE_LA_APP
 
 Comprueba el resultado:
 
-```powershell
-Invoke-RestMethod https://NOMBRE_DE_LA_APP.herokuapp.com/api/health
+```bash
+curl --fail --show-error https://NOMBRE_DE_LA_APP.herokuapp.com/api/health
 heroku logs --tail --app NOMBRE_DE_LA_APP
 ```
 
@@ -96,7 +134,7 @@ Un `503` significa que el contenedor arranco, pero no puede conectarse a Postgre
 
 Genera una autorizacion dedicada y copia el valor de `Token` una sola vez:
 
-```powershell
+```bash
 heroku authorizations:create --description "Jenkins rokishi-back"
 ```
 
@@ -121,18 +159,30 @@ El pipeline hace lo siguiente:
 
 1. Descarga el commit.
 2. Ejecuta `go test ./...`.
-3. Construye la imagen Docker.
+3. Construye una imagen `linux/amd64`, aunque Jenkins se ejecute en ARM64.
 4. En `main`, aplica las migraciones pendientes.
 5. Publica y libera la imagen en Heroku.
 6. Reintenta `/api/health` hasta confirmar API y base.
 
 El `Jenkinsfile` consulta GitHub cada cinco minutos con `pollSCM`. Esto evita exponer tu Jenkins local a Internet. Si mas adelante Jenkins tiene HTTPS publico, puedes sustituirlo por un webhook de GitHub.
 
+El pipeline elimina las etiquetas de imagen que crea al terminar. Docker conserva una cache de compilacion para acelerar ejecuciones posteriores. Revisa periodicamente su consumo:
+
+```bash
+docker system df
+```
+
+Si necesitas recuperar espacio, limpia cache de compilacion con mas de siete dias. Este comando puede hacer mas lenta la siguiente compilacion y afecta a todos los proyectos Docker de la Raspberry:
+
+```bash
+docker builder prune --filter until=168h --force
+```
+
 ## 6. Flujo diario
 
 Trabaja en una rama y subela a GitHub:
 
-```powershell
+```bash
 git checkout -b feature/mi-cambio
 git add .
 git commit -m "Describe el cambio"
@@ -145,7 +195,7 @@ Jenkins ejecutara pruebas y construira la imagen para la rama. El despliegue y l
 
 Revisa **Heroku Dashboard > Account Settings > Billing** cada pocos dias durante el primer mes. El uso mostrado puede llevar retraso.
 
-```powershell
+```bash
 heroku addons --app NOMBRE_DE_LA_APP
 heroku ps --app NOMBRE_DE_LA_APP
 ```
@@ -154,15 +204,17 @@ Debe existir una base Essential-0 y un solo dyno `web`. No habilites Heroku CI n
 
 Para detener temporalmente la API sin borrar la base:
 
-```powershell
+```bash
 heroku ps:scale web=0 --app NOMBRE_DE_LA_APP
 ```
 
 ## 8. Problemas comunes
 
-- **`docker` no se reconoce:** instala Docker y reinicia el agente Jenkins.
-- **Jenkins no accede a Docker:** ejecuta el agente con una cuenta autorizada y confirma `docker version` desde un trabajo.
-- **`migrate` no se reconoce:** agrega la carpeta devuelta por `go env GOPATH`, seguida de `\bin`, al `PATH` del agente.
+- **`docker` no se reconoce:** instala Docker Engine y reinicia Jenkins.
+- **Jenkins recibe `permission denied` con Docker:** confirma que `jenkins` pertenece al grupo `docker` y reinicia Jenkins.
+- **`docker buildx` no existe:** instala el complemento Buildx para Docker Engine.
+- **Heroku rechaza la arquitectura:** confirma que el build usa `--platform linux/amd64`; Heroku Container Registry no acepta ARM64.
+- **`migrate` no existe:** confirma la ruta con `sudo -u jenkins -H sh -c 'go env GOPATH'` y actualiza el `Jenkinsfile` si no es `/var/lib/jenkins/go`.
 - **Falla el login al registro:** reemplaza el secreto `heroku-api-key` con un token vigente.
 - **La migracion queda en estado dirty:** no uses `force` a ciegas; revisa primero la migracion fallida y la base.
 - **Health devuelve `503`:** ejecuta `heroku pg:info` y revisa `heroku logs --tail`.
@@ -173,3 +225,4 @@ heroku ps:scale web=0 --app NOMBRE_DE_LA_APP
 - [Heroku Container Registry](https://devcenter.heroku.com/articles/container-registry-and-runtime)
 - [Provisionar Heroku Postgres](https://devcenter.heroku.com/articles/provisioning-heroku-postgres)
 - [Autenticacion de Heroku CLI](https://devcenter.heroku.com/articles/authentication)
+- [Instalar Docker Engine en Ubuntu](https://docs.docker.com/engine/install/ubuntu/)

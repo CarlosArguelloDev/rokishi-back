@@ -19,16 +19,20 @@ pipeline {
 
         stage('Test') {
             steps {
-                powershell 'go test ./...'
+                sh 'go test ./...'
             }
         }
 
         stage('Build image') {
             steps {
-                powershell '''
-                    $ErrorActionPreference = 'Stop'
-                    docker build --pull --tag "rokishi-api:$env:BUILD_NUMBER" .
-                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                sh '''
+                    set -eu
+                    docker buildx build \
+                      --platform linux/amd64 \
+                      --pull \
+                      --load \
+                      --tag "rokishi-api:${BUILD_NUMBER}" \
+                      .
                 '''
             }
         }
@@ -42,14 +46,12 @@ pipeline {
                     string(credentialsId: 'heroku-api-key', variable: 'HEROKU_API_KEY'),
                     string(credentialsId: 'heroku-app-name', variable: 'HEROKU_APP_NAME')
                 ]) {
-                    powershell '''
-                        $ErrorActionPreference = 'Stop'
-                        $databaseUrl = heroku config:get DATABASE_URL --app $env:HEROKU_APP_NAME
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                        if ([string]::IsNullOrWhiteSpace($databaseUrl)) { throw 'Heroku no devolvio DATABASE_URL' }
-
-                        migrate -path .\migrations -database $databaseUrl up
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                    sh '''
+                        set -eu
+                        database_url="$(heroku config:get DATABASE_URL --app "$HEROKU_APP_NAME")"
+                        test -n "$database_url"
+                        "$HOME/go/bin/migrate" -path ./migrations -database "$database_url" up
+                        unset database_url
                     '''
                 }
             }
@@ -64,21 +66,15 @@ pipeline {
                     string(credentialsId: 'heroku-api-key', variable: 'HEROKU_API_KEY'),
                     string(credentialsId: 'heroku-app-name', variable: 'HEROKU_APP_NAME')
                 ]) {
-                    powershell '''
-                        $ErrorActionPreference = 'Stop'
-                        $registryImage = "registry.heroku.com/$env:HEROKU_APP_NAME/web"
+                    sh '''
+                        set -eu
+                        registry_image="registry.heroku.com/${HEROKU_APP_NAME}/web"
+                        trap 'docker image rm "$registry_image" >/dev/null 2>&1 || true' EXIT
 
-                        $env:HEROKU_API_KEY | docker login --username=_ --password-stdin registry.heroku.com
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-                        docker tag "rokishi-api:$env:BUILD_NUMBER" $registryImage
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-                        docker push $registryImage
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-                        heroku container:release web --app $env:HEROKU_APP_NAME
-                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        printf '%s' "$HEROKU_API_KEY" | docker login --username=_ --password-stdin registry.heroku.com
+                        docker tag "rokishi-api:${BUILD_NUMBER}" "$registry_image"
+                        docker push "$registry_image"
+                        heroku container:release web --app "$HEROKU_APP_NAME"
                     '''
                 }
             }
@@ -94,12 +90,10 @@ pipeline {
                 ]) {
                     retry(6) {
                         sleep time: 10, unit: 'SECONDS'
-                        powershell '''
-                            $ErrorActionPreference = 'Stop'
-                            $health = Invoke-RestMethod "https://$env:HEROKU_APP_NAME.herokuapp.com/api/health"
-                            if ($health.status -ne 'ok' -or $health.database -ne 'up') {
-                                throw "Health check inesperado: $($health | ConvertTo-Json -Compress)"
-                            }
+                        sh '''
+                            set -eu
+                            curl --fail --show-error --silent \
+                              "https://${HEROKU_APP_NAME}.herokuapp.com/api/health"
                         '''
                     }
                 }
@@ -109,7 +103,8 @@ pipeline {
 
     post {
         always {
-            powershell 'docker logout registry.heroku.com 2>$null; exit 0'
+            sh 'docker logout registry.heroku.com >/dev/null 2>&1 || true'
+            sh 'docker image rm "rokishi-api:${BUILD_NUMBER}" >/dev/null 2>&1 || true'
         }
     }
 }
