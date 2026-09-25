@@ -50,7 +50,7 @@ pipeline {
                         set -eu
                         database_url="$(heroku config:get DATABASE_URL --app "$HEROKU_APP_NAME")"
                         test -n "$database_url"
-                        "$HOME/go/bin/migrate" -path ./migrations -database "$database_url" up
+                        migrate -path ./migrations -database "$database_url" up
                         unset database_url
                     '''
                 }
