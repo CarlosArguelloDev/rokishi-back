@@ -2,6 +2,8 @@
 
 API REST en Go para gestion de produccion. Esta primera fase expone `GET /api/health` y comprueba PostgreSQL mediante el pool de conexiones.
 
+Para publicar la API con presupuesto limitado y automatizarla desde Jenkins, consulta [DEPLOY_HEROKU_JENKINS.md](DEPLOY_HEROKU_JENKINS.md).
+
 ## Requisitos
 
 - Go 1.26 o posterior.
