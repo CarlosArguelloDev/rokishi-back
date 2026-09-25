@@ -40,3 +40,24 @@ Para ejecutar pruebas:
 ```powershell
 go test ./...
 ```
+
+## Docker
+
+Construye la imagen desde la raiz del repositorio:
+
+```powershell
+docker build -t rokishi-api:local .
+```
+
+Ejecuta la API publicando el puerto `8081`. En Docker Desktop para Windows, `host.docker.internal` permite conectar el contenedor con PostgreSQL ejecutado en el equipo anfitrion:
+
+```powershell
+docker run --rm --name rokishi-api `
+  -p 8081:8081 `
+  -e HTTP_ADDR=:8081 `
+  -e SHUTDOWN_TIMEOUT=10s `
+  -e "DATABASE_URL=postgres://usuario:password@host.docker.internal:5432/rokishi?sslmode=disable" `
+  rokishi-api:local
+```
+
+La imagen ejecuta solamente la API. Las migraciones se aplican por separado con `golang-migrate` antes de iniciar la version correspondiente de la aplicacion.
