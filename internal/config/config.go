@@ -23,7 +23,11 @@ func Load() (Config, error) {
 		return Config{}, errors.New("DATABASE_URL es obligatoria")
 	}
 	if cfg.HTTPAddr == "" {
-		cfg.HTTPAddr = ":8081"
+		if port := os.Getenv("PORT"); port != "" {
+			cfg.HTTPAddr = ":" + port
+		} else {
+			cfg.HTTPAddr = ":8081"
+		}
 	}
 	_, port, err := net.SplitHostPort(cfg.HTTPAddr)
 	if err != nil {

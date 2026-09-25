@@ -18,7 +18,7 @@ $env:HTTP_ADDR = ':8081'
 $env:SHUTDOWN_TIMEOUT = '10s'
 ```
 
-`DATABASE_URL` es obligatoria. `HTTP_ADDR` y `SHUTDOWN_TIMEOUT` tienen los valores mostrados como predeterminados. Usa `sslmode` apropiado para tu servidor. No guardes credenciales reales en archivos del repositorio.
+`DATABASE_URL` es obligatoria. `HTTP_ADDR` y `SHUTDOWN_TIMEOUT` tienen los valores mostrados como predeterminados. Cuando `HTTP_ADDR` no existe, la API acepta `PORT`, que es la variable proporcionada por Heroku. Usa `sslmode` apropiado para tu servidor. No guardes credenciales reales en archivos del repositorio.
 
 Aplica el esquema inicial **solo en una base vacia**. Si ya cargaste `gestor_impresiones_3d_basico.sql` en esa base, crea otra para esta migracion: el `down` elimina las tablas, incluidos sus datos.
 
@@ -61,3 +61,24 @@ docker run --rm --name rokishi-api `
 ```
 
 La imagen ejecuta solamente la API. Las migraciones se aplican por separado con `golang-migrate` antes de iniciar la version correspondiente de la aplicacion.
+
+## Prueba con Heroku
+
+Heroku Postgres agrega `DATABASE_URL` a la configuracion de la aplicacion. La API tambien lee el `PORT` dinamico que Heroku asigna al proceso web, por lo que no debes configurar ninguna de esas dos variables manualmente.
+
+Antes de desplegar la API, aplica la migracion desde tu equipo usando temporalmente la URL administrada por Heroku:
+
+```powershell
+$env:DATABASE_URL = heroku config:get DATABASE_URL -a NOMBRE_DE_LA_APP
+& "$(go env GOPATH)\bin\migrate.exe" -path .\migrations -database $env:DATABASE_URL up
+Remove-Item Env:DATABASE_URL
+```
+
+Una vez desplegada, comprueba la API y revisa los registros:
+
+```powershell
+Invoke-RestMethod https://NOMBRE_DE_LA_APP.herokuapp.com/api/health
+heroku logs --tail -a NOMBRE_DE_LA_APP
+```
+
+La respuesta esperada es `{"status":"ok","database":"up"}`. Un `503` indica que la API esta ejecutandose, pero no puede conectarse a PostgreSQL.
