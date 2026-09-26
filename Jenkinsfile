@@ -23,12 +23,15 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     docker buildx build \
-                      --platform linux/amd64 \
-                      --pull \
-                      --load \
-                      --tag "rokishi-api:${BUILD_NUMBER}" \
-                      .
+                    --platform linux/amd64 \
+                    --provenance=false \
+                    --sbom=false \
+                    --output=type=docker,oci-mediatypes=false \
+                    --pull \
+                    --tag "rokishi-api:${BUILD_NUMBER}" \
+                    .
                 '''
             }
         }
