@@ -6,10 +6,6 @@ pipeline {
         timestamps()
     }
 
-    triggers {
-        pollSCM('H/5 * * * *')
-    }
-
     stages {
         stage('Checkout') {
             steps {
@@ -64,19 +60,40 @@ pipeline {
             }
             steps {
                 withCredentials([
-                    string(credentialsId: 'heroku-api-key', variable: 'HEROKU_API_KEY'),
-                    string(credentialsId: 'heroku-app-name', variable: 'HEROKU_APP_NAME')
+                    string(
+                        credentialsId: 'heroku-api-key',
+                        variable: 'HEROKU_API_KEY'
+                    ),
+                    string(
+                        credentialsId: 'heroku-app-name',
+                        variable: 'HEROKU_APP_NAME'
+                    )
                 ]) {
                     sh '''
                         set +x
                         set -eu
-                        registry_image="registry.heroku.com/${HEROKU_APP_NAME}/web"
-                        trap 'docker image rm "$registry_image" >/dev/null 2>&1 || true' EXIT
 
-                        printf '%s' "$HEROKU_API_KEY" | docker login --username=_ --password-stdin registry.heroku.com
-                        docker tag "rokishi-api:${BUILD_NUMBER}" "$registry_image"
+                        export DOCKER_CONFIG
+                        DOCKER_CONFIG="$(mktemp -d)"
+
+                        registry_image="registry.heroku.com/${HEROKU_APP_NAME}/web"
+
+                        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+
+                        printf '%s' "$HEROKU_API_KEY" |
+                            docker login \
+                            --username=_ \
+                            --password-stdin \
+                            registry.heroku.com
+
+                        docker tag \
+                        "rokishi-api:${BUILD_NUMBER}" \
+                        "$registry_image"
+
                         docker push "$registry_image"
-                        heroku container:release web --app "$HEROKU_APP_NAME"
+
+                        heroku container:release web \
+                        --app "$HEROKU_APP_NAME"
                     '''
                 }
             }
@@ -105,7 +122,6 @@ pipeline {
 
     post {
         always {
-            sh 'docker logout registry.heroku.com >/dev/null 2>&1 || true'
             sh 'docker image rm "rokishi-api:${BUILD_NUMBER}" >/dev/null 2>&1 || true'
         }
     }
