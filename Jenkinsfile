@@ -108,14 +108,21 @@ pipeline {
             }
             steps {
                 withCredentials([
-                    string(credentialsId: 'heroku-app-name', variable: 'HEROKU_APP_NAME')
+                    string(
+                        credentialsId: 'heroku-app-url',
+                        variable: 'HEROKU_APP_URL'
+                    )
                 ]) {
                     retry(6) {
                         sleep time: 10, unit: 'SECONDS'
+
                         sh '''
                             set -eu
-                            curl --fail --show-error --silent \
-                              "https://${HEROKU_APP_NAME}.herokuapp.com/api/health"
+
+                            curl --fail \
+                                --show-error \
+                                --silent \
+                                "${HEROKU_APP_URL}/api/health"
                         '''
                     }
                 }
