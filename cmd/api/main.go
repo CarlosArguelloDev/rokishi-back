@@ -14,6 +14,8 @@ import (
 	"rokishi-back/internal/config"
 	"rokishi-back/internal/database"
 	"rokishi-back/internal/http/router"
+	"rokishi-back/internal/repository"
+	"rokishi-back/internal/service"
 )
 
 func main() {
@@ -37,6 +39,10 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+	locationRepository := repository.NewLocationRepository(pool)
+	machineTypeRepository := repository.NewMachineTypeRepository(pool)
+	locationService := service.NewLocationService(locationRepository)
+	machineTypeService := service.NewMachineTypeService(machineTypeRepository)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -45,7 +51,12 @@ func run(logger *slog.Logger) error {
 	defer listener.Close()
 
 	server := &http.Server{
-		Handler:           router.New(pool.Ping),
+		Handler: router.New(router.Dependencies{
+			Ping:           pool.Ping,
+			Locations:      locationService,
+			MachineTypes:   machineTypeService,
+			AllowedOrigins: cfg.AllowedOrigins,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErrors := make(chan error, 1)

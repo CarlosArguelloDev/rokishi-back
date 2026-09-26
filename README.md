@@ -1,6 +1,6 @@
 # Rokishi API
 
-API REST en Go para gestion de produccion. Esta primera fase expone `GET /api/health` y comprueba PostgreSQL mediante el pool de conexiones.
+API REST en Go para gestion de produccion. Incluye el endpoint de salud y los catalogos de locaciones y tipos de maquina.
 
 Para publicar la API con presupuesto limitado y automatizarla desde Jenkins, consulta [DEPLOY_HEROKU_JENKINS.md](DEPLOY_HEROKU_JENKINS.md).
 
@@ -18,9 +18,10 @@ Desde este directorio, configura las variables para tu entorno. La API lee varia
 $env:DATABASE_URL = 'postgres://usuario:password@localhost:5432/rokishi?sslmode=disable'
 $env:HTTP_ADDR = ':8081'
 $env:SHUTDOWN_TIMEOUT = '10s'
+$env:CORS_ALLOWED_ORIGINS = 'http://localhost:5173'
 ```
 
-`DATABASE_URL` es obligatoria. `HTTP_ADDR` y `SHUTDOWN_TIMEOUT` tienen los valores mostrados como predeterminados. Cuando `HTTP_ADDR` no existe, la API acepta `PORT`, que es la variable proporcionada por Heroku. Usa `sslmode` apropiado para tu servidor. No guardes credenciales reales en archivos del repositorio.
+`DATABASE_URL` es obligatoria. `HTTP_ADDR` y `SHUTDOWN_TIMEOUT` tienen los valores mostrados como predeterminados. Cuando `HTTP_ADDR` no existe, la API acepta `PORT`, que es la variable proporcionada por Heroku. `CORS_ALLOWED_ORIGINS` acepta origenes exactos separados por comas y usa `http://localhost:5173` por defecto. En Heroku debe incluir el dominio de Cloudflare Pages. Usa `sslmode` apropiado para tu servidor. No guardes credenciales reales en archivos del repositorio.
 
 Aplica el esquema inicial **solo en una base vacia**. Si ya cargaste `gestor_impresiones_3d_basico.sql` en esa base, crea otra para esta migracion: el `down` elimina las tablas, incluidos sus datos.
 
@@ -42,6 +43,29 @@ Para ejecutar pruebas:
 ```powershell
 go test ./...
 ```
+
+## Catalogos de la Fase 2
+
+La API expone:
+
+- `POST /api/locaciones`
+- `GET /api/locaciones`
+- `GET /api/locaciones/{id}`
+- `PATCH /api/locaciones/{id}`
+- `POST /api/tipos-maquina`
+- `GET /api/tipos-maquina`
+- `GET /api/tipos-maquina/{id}`
+- `PATCH /api/tipos-maquina/{id}`
+
+Las respuestas exitosas usan `{"data": ...}`. Los errores usan `{"error":{"code":"...","message":"..."}}`. Por ejemplo:
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/locaciones -Method Post -ContentType 'application/json' -Body '{"codigo":"MX-01","nombre":"Taller Centro"}'
+Invoke-RestMethod http://localhost:8081/api/locaciones
+Invoke-RestMethod http://localhost:8081/api/locaciones/1 -Method Patch -ContentType 'application/json' -Body '{"activa":false}'
+```
+
+Los codigos de locacion y los nombres de tipo duplicados devuelven `409`. Los identificadores inexistentes devuelven `404`; los datos invalidos devuelven `422`.
 
 ## Docker
 
