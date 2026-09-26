@@ -47,6 +47,7 @@ pipeline {
                     string(credentialsId: 'heroku-app-name', variable: 'HEROKU_APP_NAME')
                 ]) {
                     sh '''
+                        set +x
                         set -eu
                         database_url="$(heroku config:get DATABASE_URL --app "$HEROKU_APP_NAME")"
                         test -n "$database_url"
@@ -67,6 +68,7 @@ pipeline {
                     string(credentialsId: 'heroku-app-name', variable: 'HEROKU_APP_NAME')
                 ]) {
                     sh '''
+                        set +x
                         set -eu
                         registry_image="registry.heroku.com/${HEROKU_APP_NAME}/web"
                         trap 'docker image rm "$registry_image" >/dev/null 2>&1 || true' EXIT

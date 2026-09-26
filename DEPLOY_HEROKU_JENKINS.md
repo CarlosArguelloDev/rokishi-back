@@ -1,244 +1,319 @@
-# Despliegue en Heroku con Jenkins
+# Heroku CI/CD con Jenkins en Raspberry Pi
 
-Esta guia despliega la API y PostgreSQL en Heroku mediante el `Dockerfile` del repositorio. Jenkins se ejecuta en una Raspberry Pi con Ubuntu; no se crea un dyno para Jenkins.
+Esta guia corresponde a esta instalacion concreta:
 
-## Presupuesto mensual
+- Raspberry Pi con Ubuntu y Docker Engine.
+- Jenkins ejecutado como contenedor.
+- Datos persistentes en `/home/charli/jenkins-lab/jenkins_home`.
+- Jenkins usa el Docker del host mediante `/var/run/docker.sock`.
+- Cloudflared publica Jenkins mediante un tunel administrado remotamente.
+- La API y PostgreSQL se ejecutaran en Heroku.
 
-Precios consultados el 24 de septiembre de 2026:
+## 0. Rotar primero el token de Cloudflare
+
+El token del tunel fue expuesto y debe considerarse comprometido. Cualquier persona que tenga ese valor puede ejecutar un conector para el tunel.
+
+1. Abre **Cloudflare Dashboard > Networking > Tunnels**.
+2. Selecciona el tunel usado por Jenkins.
+3. Selecciona **Rotate token** o **Refresh token**.
+4. Copia el nuevo token, pero no lo pegues en Git, Jenkinsfile, Compose ni mensajes.
+5. Tras actualizar Cloudflared, fuerza la desconexion de conectores anteriores desde Cloudflare.
+
+Cloudflare documenta este procedimiento en [Tunnel tokens](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/).
+
+## 1. Presupuesto de Heroku
+
+Precios consultados el 26 de septiembre de 2026:
 
 | Recurso | Plan | Costo maximo |
 |---|---|---:|
 | API | Eco | USD 5/mes |
 | PostgreSQL | Essential-0 | USD 5/mes |
-| Total recomendado para comenzar | | **USD 10/mes** |
+| Total recomendado | | **USD 10/mes** |
 
-El dyno Eco incluye 1,000 horas compartidas entre tus aplicaciones y duerme despues de 30 minutos sin trafico. La primera peticion despues de dormir tarda unos segundos adicionales.
+Eco duerme despues de 30 minutos sin trafico. Si necesitas una API siempre activa, Basic cuesta hasta USD 7 y lleva el total a USD 12 antes de impuestos. Con un limite estricto de USD 13, comienza con Eco.
 
-Cuando necesites que la API permanezca encendida, cambia el dyno a Basic. Basic cuesta hasta USD 7/mes y Essential-0 USD 5/mes: **USD 12/mes antes de impuestos**. Con un limite estricto de USD 13, Eco deja mas margen para impuestos o variaciones. No agregues Redis, monitoreo de pago, otra base ni aplicaciones de prueba permanentes.
+No habilites Heroku CI ni Review Apps porque Jenkins ya cubre CI/CD y esos entornos pueden consumir recursos adicionales.
 
-Fuentes oficiales: [precios de Heroku](https://www.heroku.com/pricing/), [horas Eco](https://devcenter.heroku.com/articles/eco-dyno-hours) y [facturacion](https://devcenter.heroku.com/articles/usage-and-billing).
+Fuentes: [precios de Heroku](https://www.heroku.com/pricing/), [Eco Dynos](https://devcenter.heroku.com/articles/eco-dyno-hours) y [facturacion](https://devcenter.heroku.com/articles/usage-and-billing).
 
-## 1. Preparar Jenkins en Docker
+## 2. Que cambia en Jenkins
 
-Conectate por SSH a la Raspberry y confirma su arquitectura:
+El contenedor actual monta `/usr/bin/docker` desde Ubuntu. Ese montaje puede fallar cuando la biblioteca del host no coincide con la distribucion dentro del contenedor.
+
+La configuracion nueva:
+
+- Conserva `./jenkins_home:/var/jenkins_home`.
+- Conserva `/var/run/docker.sock:/var/run/docker.sock`.
+- Elimina el montaje `/usr/bin/docker:/usr/bin/docker`.
+- Construye una imagen Jenkins con Docker CLI, Buildx, Go, Heroku CLI, `migrate`, Git y `curl`.
+- Actualiza Jenkins de `lts-jdk17` a `lts-jdk21`, requerido por las LTS actuales.
+- Mantiene Cloudflared como segundo servicio.
+- Lee el token de Cloudflare desde un archivo secreto montado en `/run/secrets`.
+
+El socket de Docker proporciona a los trabajos de Jenkins control equivalente a `root` sobre la Raspberry. Permite ejecutar pipelines unicamente desde repositorios y usuarios de confianza. Protege el hostname publico de Jenkins con Cloudflare Access, ademas del inicio de sesion de Jenkins.
+
+## 3. Preparar los archivos en la Raspberry
+
+Conectate por SSH y entra al directorio actual:
 
 ```bash
-uname -m
+cd /home/charli/jenkins-lab
 ```
 
-Lo habitual es `aarch64` o `arm64`. Heroku Container Registry solo ejecuta imagenes `x86_64`, por lo que el pipeline construye explicitamente para `linux/amd64`.
-
-El contenedor oficial de Jenkins no incluye Docker CLI. Este repositorio contiene `deploy/jenkins/Dockerfile`, una imagen personalizada con Git, Go, Docker CLI/Buildx, Heroku CLI, `golang-migrate` y `curl`.
-
-### 1.1 Identificar el almacenamiento actual
-
-Antes de reemplazar el contenedor, identifica su nombre y el volumen o directorio montado en `/var/jenkins_home`:
+Desde una copia actualizada de `rokishi-back`, copia los archivos preparados. Sustituye `/RUTA/AL/REPO`:
 
 ```bash
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
-docker inspect NOMBRE_JENKINS_ACTUAL \
-  --format '{{range .Mounts}}{{println .Type .Name .Source .Destination}}{{end}}'
+cp /RUTA/AL/REPO/deploy/jenkins/Dockerfile ./Dockerfile.jenkins
+cp /RUTA/AL/REPO/deploy/jenkins/docker-compose.raspberry.yml ./docker-compose.yml.new
+cp /RUTA/AL/REPO/deploy/jenkins/dockerignore.raspberry ./.dockerignore
 ```
 
-Anota exactamente el origen asociado con `/var/jenkins_home`. Ese almacenamiento contiene trabajos, plugins y credenciales. Reutilizarlo conserva tu Jenkins actual. No elimines el contenedor ni el volumen existentes antes de verificar la nueva instancia.
-
-### 1.2 Construir la imagen de Jenkins
-
-Desde una copia de este repositorio en la Raspberry:
+Construye la nueva imagen antes de detener Jenkins:
 
 ```bash
-docker build --tag rokishi-jenkins:lts deploy/jenkins
+docker build --tag rokishi-jenkins:lts --file Dockerfile.jenkins .
 ```
 
-La imagen se construye para la arquitectura de la Raspberry. Solamente las imagenes de la API se generan como `linux/amd64` para Heroku.
+La imagen se construye para ARM64, que es la arquitectura de la Raspberry. El pipeline genera por separado la API para `linux/amd64`, porque Heroku Container Registry solo acepta `x86_64`.
 
-### 1.3 Crear el daemon Docker para Jenkins
+## 4. Detener y respaldar Jenkins
 
-La configuracion recomendada por Jenkins usa un contenedor Docker-in-Docker separado y comunicacion TLS:
+Guarda el Compose actual y detiene los servicios:
 
 ```bash
-docker network create jenkins
-docker volume create jenkins-docker-certs
-docker volume create jenkins-docker-data
-
-docker run --name jenkins-docker \
-  --detach \
-  --restart unless-stopped \
-  --privileged \
-  --network jenkins \
-  --network-alias docker \
-  --env DOCKER_TLS_CERTDIR=/certs \
-  --volume jenkins-docker-certs:/certs/client \
-  --volume jenkins-docker-data:/var/lib/docker \
-  docker:dind \
-  --storage-driver overlay2
+cp docker-compose.yml docker-compose.yml.before-heroku
+docker compose down
 ```
 
-Si esos nombres ya existen porque Jenkins ya usa Docker-in-Docker, no crees duplicados: inspecciona y reutiliza la configuracion actual.
-
-### 1.4 Reemplazar el contenedor sin perder Jenkins
-
-Deten el contenedor actual y conservalo como respaldo:
+`docker compose down` no borra `./jenkins_home`. Crea de todas formas un respaldo antes de continuar:
 
 ```bash
-docker stop NOMBRE_JENKINS_ACTUAL
-docker rename NOMBRE_JENKINS_ACTUAL jenkins-backup
+sudo tar -C /home/charli/jenkins-lab \
+  -czf "/home/charli/jenkins-home-$(date +%Y%m%d-%H%M%S).tar.gz" \
+  jenkins_home
 ```
 
-Inicia la imagen personalizada reutilizando **el mismo origen** que encontraste para `/var/jenkins_home`. Si era un volumen llamado `jenkins_home`, el comando es:
+No uses `docker compose down -v` y no elimines `jenkins_home`.
+
+## 5. Guardar el nuevo token como secreto
+
+Crea el archivo secreto sin escribir el token en el historial del shell:
 
 ```bash
-docker run --name jenkins \
-  --detach \
-  --restart unless-stopped \
-  --network jenkins \
-  --env DOCKER_HOST=tcp://docker:2376 \
-  --env DOCKER_CERT_PATH=/certs/client \
-  --env DOCKER_TLS_VERIFY=1 \
-  --volume jenkins_home:/var/jenkins_home \
-  --volume jenkins-docker-certs:/certs/client:ro \
-  --publish 8080:8080 \
-  --publish 50000:50000 \
-  rokishi-jenkins:lts
+cd /home/charli/jenkins-lab
+umask 077
+mkdir -p secrets
+read -s -p "Nuevo token de Cloudflare: " CLOUDFLARE_TUNNEL_TOKEN
+printf '\n'
+printf '%s' "$CLOUDFLARE_TUNNEL_TOKEN" > secrets/cloudflare_tunnel_token
+unset CLOUDFLARE_TUNNEL_TOKEN
+chmod 600 secrets/cloudflare_tunnel_token
 ```
 
-Si usabas un directorio del host, sustituye `jenkins_home` por la ruta exacta, por ejemplo `/srv/jenkins:/var/jenkins_home`. No uses un volumen nuevo por accidente: Jenkins apareceria vacio aunque tus datos anteriores siguieran almacenados en otro volumen.
+No agregues `secrets/` ni `jenkins_home/` a Git. El Compose monta el archivo en `/run/secrets/cloudflare_tunnel_token`; el token no aparece en la linea de comandos ni en las variables mostradas por `docker inspect`. Cloudflared se ejecuta como `root` dentro de su contenedor para leer el archivo con permisos `600`; ese contenedor no tiene montado el socket de Docker ni otros directorios del host.
 
-Prepara Buildx y verifica todas las herramientas dentro del contenedor:
+## 6. Activar el Compose nuevo
+
+Reemplaza el archivo Compose y levanta los servicios:
 
 ```bash
-docker exec jenkins docker buildx create \
-  --name jenkins-builder \
-  --driver docker-container \
-  --use
-docker exec jenkins docker buildx inspect --bootstrap
+mv docker-compose.yml.new docker-compose.yml
+docker compose up -d
+docker compose ps
+```
 
+El nuevo Compose equivale a:
+
+```yaml
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
+    image: rokishi-jenkins:lts
+    container_name: jenkins
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - ./jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    user: root
+    depends_on:
+      - jenkins
+    environment:
+      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
+    secrets:
+      - cloudflare_tunnel_token
+    command: tunnel --no-autoupdate run
+
+secrets:
+  cloudflare_tunnel_token:
+    file: ./secrets/cloudflare_tunnel_token
+```
+
+En Cloudflare, el servicio del hostname de Jenkins debe apuntar a `http://jenkins:8080`, porque ambos servicios comparten la red creada por Compose.
+
+## 7. Verificar Jenkins y Cloudflared
+
+Confirma que Jenkins conserva los datos anteriores y que todas las herramientas existen:
+
+```bash
+docker exec jenkins java -version
 docker exec jenkins git --version
 docker exec jenkins go version
 docker exec jenkins docker version
+docker exec jenkins docker buildx version
 docker exec jenkins heroku version
 docker exec jenkins migrate -version
 docker exec jenkins curl --version
 ```
 
-Abre Jenkins en el puerto `8080` y confirma que tus trabajos y credenciales siguen presentes. Conserva `jenkins-backup` hasta completar varios builds correctamente.
+Confirma el tunel sin mostrar sus variables de entorno:
 
-## 2. Crear la aplicacion y la base
+```bash
+docker logs --tail 50 cloudflared
+```
 
-Abre una terminal dentro del contenedor personalizado, inicia sesion y elige un nombre globalmente unico. Sustituye `NOMBRE_DE_LA_APP` en todos los comandos:
+Abre Jenkins mediante su hostname habitual y revisa que aparezcan los trabajos, plugins y credenciales anteriores. Si Jenkins aparece vacio, detente: el bind mount no apunta al `jenkins_home` original. Restaura `docker-compose.yml.before-heroku` antes de realizar otros cambios.
+
+Cuando confirmes que todo funciona, edita `docker-compose.yml.before-heroku` y elimina el token antiguo que quedo dentro de ese respaldo. El token ya no sera valido despues de la rotacion, pero tampoco conviene conservarlo.
+
+## 8. Crear la aplicacion y PostgreSQL en Heroku
+
+Primero suscribe la cuenta personal al plan Eco desde Heroku Dashboard. Despues abre una terminal dentro de Jenkins:
 
 ```bash
 docker exec -it jenkins bash
+```
+
+Dentro del contenedor:
+
+```bash
 heroku login
 heroku create NOMBRE_DE_LA_APP --stack container
-heroku addons:create heroku-postgresql:essential-0 --app NOMBRE_DE_LA_APP --wait
+heroku addons:create heroku-postgresql:essential-0 \
+  --app NOMBRE_DE_LA_APP \
+  --wait
 heroku pg:info --app NOMBRE_DE_LA_APP
 heroku authorizations:create --description "Jenkins rokishi-back"
 ```
 
-Heroku crea y administra `DATABASE_URL`. No copies esa URL al repositorio ni la configures manualmente en la aplicacion. La API ya lee `DATABASE_URL` y el `PORT` dinamico de Heroku.
+Copia el valor `Token` del ultimo comando. Heroku configura `DATABASE_URL`; no copies esa URL al repositorio ni la agregues manualmente a Jenkins.
 
-Copia el valor `Token` producido por `authorizations:create`; se guardara en Jenkins en el siguiente paso. Es distinto de tu contrasena de Heroku.
+## 9. Crear las credenciales de Jenkins
 
-En una cuenta personal suscrita a Eco, las aplicaciones nuevas usan Eco de forma predeterminada. Confirma el tipo y que exista un solo proceso web desde **Heroku Dashboard > App > Resources** despues del primer despliegue.
+Abre **Manage Jenkins > Credentials > System > Global credentials** y crea dos credenciales **Secret text**:
 
-## 3. Configurar el despliegue en Jenkins
-
-En Jenkins abre **Manage Jenkins > Credentials > System > Global credentials** y crea dos credenciales de tipo **Secret text**:
-
-| ID | Secret |
+| ID | Valor |
 |---|---|
-| `heroku-api-key` | El token generado por Heroku |
-| `heroku-app-name` | El nombre exacto de la aplicacion |
+| `heroku-api-key` | Token generado por `authorizations:create` |
+| `heroku-app-name` | Nombre exacto de la aplicacion Heroku |
 
-No escribas el token en el `Jenkinsfile`, en variables globales visibles ni en Git. Heroku CLI acepta `HEROKU_API_KEY`, y Jenkins la inyecta solamente durante las etapas que la necesitan.
+El token nunca debe escribirse en `Jenkinsfile` ni en Git.
 
-1. Crea un elemento de tipo **Multibranch Pipeline**.
-2. Agrega GitHub como origen y selecciona el repositorio `rokishi-back`.
-3. Agrega credenciales de GitHub si el repositorio es privado.
-4. Usa `Jenkinsfile` como ruta del script.
-5. Ejecuta **Scan Multibranch Pipeline Now**.
+## 10. Crear el Pipeline
 
-El pipeline hace lo siguiente:
+1. Crea un elemento **Multibranch Pipeline**.
+2. Agrega GitHub como origen.
+3. Selecciona el repositorio `rokishi-back`.
+4. Agrega credenciales de GitHub si es privado.
+5. Usa `Jenkinsfile` como ruta del script.
+6. Ejecuta **Scan Multibranch Pipeline Now**.
 
-1. Descarga el commit.
-2. Ejecuta `go test ./...`.
-3. Construye una imagen `linux/amd64`, aunque Jenkins se ejecute en ARM64.
-4. En `main`, aplica las migraciones pendientes.
-5. Publica y libera la imagen en Heroku.
-6. Reintenta `/api/health` hasta confirmar API y base.
+El pipeline consulta GitHub cada cinco minutos sin necesitar un webhook entrante. En todas las ramas ejecuta pruebas y construye la imagen. Solo `main` aplica migraciones, publica la imagen en Heroku y comprueba `/api/health`.
 
-El `Jenkinsfile` consulta GitHub cada cinco minutos con `pollSCM`. Esto evita exponer tu Jenkins local a Internet. Si mas adelante Jenkins tiene HTTPS publico, puedes sustituirlo por un webhook de GitHub.
-
-Fusiona o sube el proyecto a `main` y ejecuta **Build Now**. El primer pipeline aplicara la migracion inicial, publicara la API y comprobara la base.
-
-Comprueba tambien desde la Raspberry:
+La imagen se construye con:
 
 ```bash
-curl --fail --show-error https://NOMBRE_DE_LA_APP.herokuapp.com/api/health
+docker buildx build \
+  --platform linux/amd64 \
+  --pull \
+  --load \
+  --tag rokishi-api:NUMERO_DE_BUILD \
+  .
+```
+
+## 11. Primer despliegue
+
+Fusiona los cambios en `main` y ejecuta el trabajo de esa rama. El pipeline debe completar estas etapas:
+
+1. `Checkout`
+2. `Test`
+3. `Build image`
+4. `Migrate database`
+5. `Deploy`
+6. `Verify`
+
+Comprueba la API desde la Raspberry:
+
+```bash
+curl --fail --show-error \
+  https://NOMBRE_DE_LA_APP.herokuapp.com/api/health
+```
+
+Respuesta esperada:
+
+```json
+{"status":"ok","database":"up"}
+```
+
+Consulta los registros cuando falle un despliegue:
+
+```bash
 docker exec jenkins heroku logs --tail --app NOMBRE_DE_LA_APP
 ```
 
-La respuesta correcta es `{"status":"ok","database":"up"}`. Un `503` significa que el contenedor de la API arranco, pero no puede conectarse a PostgreSQL. Un error `H10` normalmente significa que el proceso no arranco o no escucho en el puerto asignado.
+## 12. Operacion y espacio en disco
 
-El pipeline elimina las etiquetas de imagen que crea al terminar. Docker conserva una cache de compilacion para acelerar ejecuciones posteriores. Revisa periodicamente su consumo:
-
-```bash
-docker exec jenkins docker system df
-```
-
-Si necesitas recuperar espacio, limpia cache de compilacion con mas de siete dias. Este comando puede hacer mas lenta la siguiente compilacion y afecta a todos los proyectos Docker de la Raspberry:
+El pipeline elimina las etiquetas de imagen creadas durante cada build. Revisa el almacenamiento del Docker del host:
 
 ```bash
-docker exec jenkins docker builder prune --filter until=168h --force
+docker system df
 ```
 
-## 4. Flujo diario
-
-Trabaja en una rama y subela a GitHub:
+Para eliminar cache de compilacion con mas de siete dias:
 
 ```bash
-git checkout -b feature/mi-cambio
-git add .
-git commit -m "Describe el cambio"
-git push -u origin feature/mi-cambio
+docker builder prune --filter until=168h --force
 ```
 
-Jenkins ejecutara pruebas y construira la imagen para la rama. El despliegue y las migraciones ocurren solamente cuando el cambio llega a `main`.
+Este comando puede hacer mas lenta la siguiente compilacion y afecta a otros proyectos Docker de la Raspberry.
 
-## 5. Control del gasto
-
-Revisa **Heroku Dashboard > Account Settings > Billing** cada pocos dias durante el primer mes. El uso mostrado puede llevar retraso.
+Revisa periodicamente el gasto de Heroku:
 
 ```bash
 docker exec jenkins heroku addons --app NOMBRE_DE_LA_APP
 docker exec jenkins heroku ps --app NOMBRE_DE_LA_APP
 ```
 
-Debe existir una base Essential-0 y un solo dyno `web`. No habilites Heroku CI ni Review Apps: ya utilizas Jenkins y esos entornos pueden consumir horas o crear complementos adicionales.
+Debe existir una base Essential-0 y un solo proceso `web`.
 
-Para detener temporalmente la API sin borrar la base:
+## 13. Problemas comunes
 
-```bash
-docker exec jenkins heroku ps:scale web=0 --app NOMBRE_DE_LA_APP
-```
-
-## 6. Problemas comunes
-
-- **`docker` no existe dentro de Jenkins:** confirma que el contenedor usa la imagen `rokishi-jenkins:lts`.
-- **Jenkins no conecta con Docker:** revisa que `jenkins-docker` este activo, ambos contenedores usen la red `jenkins`, el volumen de certificados este montado y las variables `DOCKER_HOST`, `DOCKER_CERT_PATH` y `DOCKER_TLS_VERIFY` existan.
-- **`docker buildx` no existe:** reconstruye `rokishi-jenkins:lts` y vuelve a crear el contenedor con esa imagen.
-- **Heroku rechaza la arquitectura:** confirma que el build usa `--platform linux/amd64`; Heroku Container Registry no acepta ARM64.
-- **`migrate` no existe:** reconstruye la imagen personalizada; el binario debe estar en `/usr/local/bin/migrate`.
-- **Falla el login al registro:** reemplaza el secreto `heroku-api-key` con un token vigente.
-- **La migracion queda en estado dirty:** no uses `force` a ciegas; revisa primero la migracion fallida y la base.
-- **Health devuelve `503`:** ejecuta `docker exec jenkins heroku pg:info --app NOMBRE_DE_LA_APP` y revisa los logs.
-- **La primera peticion tarda:** es normal cuando un dyno Eco despierta.
+- **Jenkins aparece vacio:** el Compose no esta montando `/home/charli/jenkins-lab/jenkins_home`.
+- **`permission denied` en `docker.sock`:** confirma que Compose conserva `user: root` y monta `/var/run/docker.sock`.
+- **`docker buildx` no existe:** reconstruye `rokishi-jenkins:lts` con `Dockerfile.jenkins`.
+- **Heroku rechaza la arquitectura:** confirma `--platform linux/amd64`; Heroku Container Registry no acepta ARM64.
+- **Cloudflared no conecta:** confirma que `secrets/cloudflare_tunnel_token` contiene el token rotado y revisa `docker logs cloudflared`.
+- **El hostname muestra 502:** configura el servicio del tunel como `http://jenkins:8080`.
+- **La migracion queda `dirty`:** revisa la migracion fallida antes de usar `force`.
+- **Health devuelve 503:** la API arranco, pero PostgreSQL no esta disponible; revisa `heroku pg:info` y los logs.
+- **La primera peticion tarda:** un dyno Eco estaba dormido y esta despertando.
 
 ## Referencias
 
+- [Jenkins en Docker](https://www.jenkins.io/doc/book/installing/docker/)
+- [Tokens de Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/)
+- [Parametros de Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/advanced/run-parameters/)
 - [Heroku Container Registry](https://devcenter.heroku.com/articles/container-registry-and-runtime)
 - [Provisionar Heroku Postgres](https://devcenter.heroku.com/articles/provisioning-heroku-postgres)
 - [Autenticacion de Heroku CLI](https://devcenter.heroku.com/articles/authentication)
-- [Instalar Docker Engine en Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
-- [Jenkins en Docker](https://www.jenkins.io/doc/book/installing/docker/)
