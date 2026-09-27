@@ -16,6 +16,7 @@ type Dependencies struct {
 	MachineStates  handlers.MachineStateService
 	Materials      handlers.MaterialService
 	Rates          handlers.RateService
+	Quotes         handlers.QuoteService
 	AllowedOrigins []string
 }
 
@@ -59,6 +60,9 @@ func New(dependencies Dependencies) http.Handler {
 	r.Put("/api/maquinas/{id}/tarifa", rates.PutMachine)
 	r.Get("/api/locaciones/{id}/tarifa-energia", rates.GetEnergy)
 	r.Put("/api/locaciones/{id}/tarifa-energia", rates.PutEnergy)
+
+	quotes := handlers.NewQuoteHandler(dependencies.Quotes)
+	r.Post("/api/cotizaciones/calcular", quotes.Calculate)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		handlers.WriteError(w, http.StatusNotFound, "not_found", "Ruta no encontrada")
 	})

@@ -124,6 +124,25 @@ Invoke-RestMethod http://localhost:8081/api/locaciones/1/tarifa-energia -Method 
 
 Los importes y existencias deben ser mayores o iguales a cero. `PUT` crea o reemplaza la configuracion de la maquina o locacion indicada sin modificar otras tarifas. Un `GET` devuelve `200` con `{"data":null}` cuando el registro existe pero su tarifa aun no se ha configurado; un identificador inexistente devuelve `404`. La Fase 5 usa las tablas del esquema inicial y no requiere una migracion nueva.
 
+## Cotizador preliminar de la Fase 6
+
+`POST /api/cotizaciones/calcular` calcula una cotizacion sin guardar datos. Los gramos y minutos representan el consumo total del lote; `cantidad_piezas` se usa para obtener el precio unitario sugerido.
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/cotizaciones/calcular -Method Post -ContentType 'application/json' -Body '{"maquina_id":1,"material_id":1,"cantidad_material_gramos":100,"duracion_minutos":120,"cantidad_piezas":2}'
+```
+
+La formula es:
+
+- `costo_material = gramos / 1000 * costo_por_kg`
+- `costo_maquina = minutos / 60 * costo_interno_hora`
+- `costo_electrico = potencia_watts / 1000 * minutos / 60 * costo_por_kwh`
+- `subtotal = costo_material + costo_maquina + costo_electrico + costo_preparacion`
+- `precio_sugerido = costo_material + minutos / 60 * precio_venta_hora + costo_electrico + costo_preparacion`
+- `precio_sugerido_por_pieza = precio_sugerido / cantidad_piezas`
+
+Cada componente monetario se redondea a centavos antes de sumar. La API usa aritmetica racional para evitar errores binarios de punto flotante. Devuelve `422 missing_configuration` si falta la potencia, la tarifa de maquina o la tarifa electrica, y `422 validation_failed` si la maquina o el material esta inactivo. Esta fase no persiste cotizaciones y no requiere una migracion nueva.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:
