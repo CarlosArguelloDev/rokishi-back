@@ -41,11 +41,14 @@ func (fakeMaterialService) Update(_ context.Context, id int64, input service.Upd
 
 type fakeRateService struct{}
 
-func (fakeRateService) GetMachineRate(_ context.Context, machineID int64) (models.MachineRate, error) {
+func (fakeRateService) GetMachineRate(_ context.Context, machineID int64) (*models.MachineRate, error) {
 	if machineID == 99 {
-		return models.MachineRate{}, service.ErrNotFound
+		return nil, service.ErrNotFound
 	}
-	return models.MachineRate{ID: 1, MachineID: machineID}, nil
+	if machineID == 98 {
+		return nil, nil
+	}
+	return &models.MachineRate{ID: 1, MachineID: machineID}, nil
 }
 
 func (fakeRateService) UpsertMachineRate(_ context.Context, machineID int64, input service.MachineRateInput) (models.MachineRate, error) {
@@ -55,8 +58,8 @@ func (fakeRateService) UpsertMachineRate(_ context.Context, machineID int64, inp
 	return models.MachineRate{ID: 1, MachineID: machineID, InternalCostHour: input.InternalCostHour}, nil
 }
 
-func (fakeRateService) GetEnergyRate(_ context.Context, locationID int64) (models.EnergyRate, error) {
-	return models.EnergyRate{ID: 1, LocationID: locationID}, nil
+func (fakeRateService) GetEnergyRate(_ context.Context, locationID int64) (*models.EnergyRate, error) {
+	return &models.EnergyRate{ID: 1, LocationID: locationID}, nil
 }
 
 func (fakeRateService) UpsertEnergyRate(_ context.Context, locationID int64, input service.EnergyRateInput) (models.EnergyRate, error) {
@@ -80,6 +83,7 @@ func TestMaterialAndRateEndpoints(t *testing.T) {
 		{"invalid material", http.MethodPost, "/api/materiales", `{"nombre":"PLA","tipo":"Filamento","costo_por_kg":-1}`, http.StatusUnprocessableEntity},
 		{"missing material", http.MethodGet, "/api/materiales/99", "", http.StatusNotFound},
 		{"get machine rate", http.MethodGet, "/api/maquinas/1/tarifa", "", http.StatusOK},
+		{"unconfigured machine rate", http.MethodGet, "/api/maquinas/98/tarifa", "", http.StatusOK},
 		{"put machine rate", http.MethodPut, "/api/maquinas/1/tarifa", `{"costo_interno_hora":20,"precio_venta_hora":60,"costo_preparacion":10}`, http.StatusOK},
 		{"invalid machine rate", http.MethodPut, "/api/maquinas/1/tarifa", `{"costo_interno_hora":-1}`, http.StatusUnprocessableEntity},
 		{"missing machine rate", http.MethodGet, "/api/maquinas/99/tarifa", "", http.StatusNotFound},

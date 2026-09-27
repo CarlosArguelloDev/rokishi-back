@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 	"unicode/utf8"
@@ -210,12 +211,18 @@ func NewRateService(repository rateRepository) *RateService {
 	return &RateService{repository: repository}
 }
 
-func (s *RateService) GetMachineRate(ctx context.Context, machineID int64) (models.MachineRate, error) {
+func (s *RateService) GetMachineRate(ctx context.Context, machineID int64) (*models.MachineRate, error) {
 	if err := s.requireMachine(ctx, machineID); err != nil {
-		return models.MachineRate{}, err
+		return nil, err
 	}
 	rate, err := s.repository.GetMachineRate(ctx, machineID)
-	return rate, mapRepositoryError(err)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rate, nil
 }
 
 func (s *RateService) UpsertMachineRate(ctx context.Context, machineID int64, input MachineRateInput) (models.MachineRate, error) {
@@ -238,12 +245,18 @@ func (s *RateService) UpsertMachineRate(ctx context.Context, machineID int64, in
 	return rate, mapMachineRepositoryError(err)
 }
 
-func (s *RateService) GetEnergyRate(ctx context.Context, locationID int64) (models.EnergyRate, error) {
+func (s *RateService) GetEnergyRate(ctx context.Context, locationID int64) (*models.EnergyRate, error) {
 	if err := s.requireLocation(ctx, locationID); err != nil {
-		return models.EnergyRate{}, err
+		return nil, err
 	}
 	rate, err := s.repository.GetEnergyRate(ctx, locationID)
-	return rate, mapRepositoryError(err)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rate, nil
 }
 
 func (s *RateService) UpsertEnergyRate(ctx context.Context, locationID int64, input EnergyRateInput) (models.EnergyRate, error) {

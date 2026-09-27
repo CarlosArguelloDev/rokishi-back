@@ -122,7 +122,7 @@ Invoke-RestMethod http://localhost:8081/api/maquinas/1/tarifa -Method Put -Conte
 Invoke-RestMethod http://localhost:8081/api/locaciones/1/tarifa-energia -Method Put -ContentType 'application/json' -Body '{"costo_por_kwh":2.3456}'
 ```
 
-Los importes y existencias deben ser mayores o iguales a cero. `PUT` crea o reemplaza la configuracion de la maquina o locacion indicada sin modificar otras tarifas. Un `GET` devuelve `404` cuando la tarifa aun no se ha configurado. La Fase 5 usa las tablas del esquema inicial y no requiere una migracion nueva.
+Los importes y existencias deben ser mayores o iguales a cero. `PUT` crea o reemplaza la configuracion de la maquina o locacion indicada sin modificar otras tarifas. Un `GET` devuelve `200` con `{"data":null}` cuando el registro existe pero su tarifa aun no se ha configurado; un identificador inexistente devuelve `404`. La Fase 5 usa las tablas del esquema inicial y no requiere una migracion nueva.
 
 ## Docker
 

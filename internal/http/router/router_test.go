@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,9 @@ func TestCORS(t *testing.T) {
 		}
 		if got := response.Header().Get("Access-Control-Allow-Origin"); got != "https://rokishi.pages.dev" {
 			t.Fatalf("allow origin = %q", got)
+		}
+		if got := response.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPut) {
+			t.Fatalf("allow methods = %q, want PUT", got)
 		}
 	})
 

@@ -16,9 +16,9 @@ type MaterialService interface {
 }
 
 type RateService interface {
-	GetMachineRate(context.Context, int64) (models.MachineRate, error)
+	GetMachineRate(context.Context, int64) (*models.MachineRate, error)
 	UpsertMachineRate(context.Context, int64, service.MachineRateInput) (models.MachineRate, error)
-	GetEnergyRate(context.Context, int64) (models.EnergyRate, error)
+	GetEnergyRate(context.Context, int64) (*models.EnergyRate, error)
 	UpsertEnergyRate(context.Context, int64, service.EnergyRateInput) (models.EnergyRate, error)
 }
 
@@ -146,7 +146,7 @@ func (h *RateHandler) GetMachine(w http.ResponseWriter, r *http.Request) {
 		writeCatalogError(w, err, "rate_conflict", "Conflicto al guardar la tarifa", "Tarifa o maquina no encontrada")
 		return
 	}
-	writeJSON(w, http.StatusOK, dataResponse[models.MachineRate]{Data: rate})
+	writeJSON(w, http.StatusOK, dataResponse[*models.MachineRate]{Data: rate})
 }
 
 func (h *RateHandler) PutMachine(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +179,7 @@ func (h *RateHandler) GetEnergy(w http.ResponseWriter, r *http.Request) {
 		writeCatalogError(w, err, "rate_conflict", "Conflicto al guardar la tarifa", "Tarifa o locacion no encontrada")
 		return
 	}
-	writeJSON(w, http.StatusOK, dataResponse[models.EnergyRate]{Data: rate})
+	writeJSON(w, http.StatusOK, dataResponse[*models.EnergyRate]{Data: rate})
 }
 
 func (h *RateHandler) PutEnergy(w http.ResponseWriter, r *http.Request) {

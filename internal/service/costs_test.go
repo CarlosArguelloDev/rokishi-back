@@ -89,33 +89,34 @@ type fakeRateRepository struct {
 	locationExists bool
 	machineRate    models.MachineRate
 	energyRate     models.EnergyRate
-	err            error
+	existsErr      error
+	rateErr        error
 }
 
 func (f *fakeRateRepository) MachineExists(context.Context, int64) (bool, error) {
-	return f.machineExists, f.err
+	return f.machineExists, f.existsErr
 }
 
 func (f *fakeRateRepository) LocationExists(context.Context, int64) (bool, error) {
-	return f.locationExists, f.err
+	return f.locationExists, f.existsErr
 }
 
 func (f *fakeRateRepository) GetMachineRate(context.Context, int64) (models.MachineRate, error) {
-	return f.machineRate, f.err
+	return f.machineRate, f.rateErr
 }
 
 func (f *fakeRateRepository) UpsertMachineRate(_ context.Context, rate models.MachineRate) (models.MachineRate, error) {
 	f.machineRate = rate
-	return rate, f.err
+	return rate, f.rateErr
 }
 
 func (f *fakeRateRepository) GetEnergyRate(context.Context, int64) (models.EnergyRate, error) {
-	return f.energyRate, f.err
+	return f.energyRate, f.rateErr
 }
 
 func (f *fakeRateRepository) UpsertEnergyRate(_ context.Context, rate models.EnergyRate) (models.EnergyRate, error) {
 	f.energyRate = rate
-	return rate, f.err
+	return rate, f.rateErr
 }
 
 func TestRateServiceUpsertsIndependentRates(t *testing.T) {
@@ -153,5 +154,18 @@ func TestRateServiceValidatesReferencesAndCosts(t *testing.T) {
 	}
 	if _, err := service.UpsertEnergyRate(context.Background(), 1, EnergyRateInput{CostPerKWh: -1}); !isValidationError(err) {
 		t.Fatalf("expected energy validation error, got %v", err)
+	}
+}
+
+func TestRateServiceReturnsNilForUnconfiguredRates(t *testing.T) {
+	repository := &fakeRateRepository{machineExists: true, locationExists: true, rateErr: repository.ErrNotFound}
+	service := NewRateService(repository)
+	machineRate, err := service.GetMachineRate(context.Background(), 1)
+	if err != nil || machineRate != nil {
+		t.Fatalf("expected unconfigured machine rate, got rate=%+v err=%v", machineRate, err)
+	}
+	energyRate, err := service.GetEnergyRate(context.Background(), 1)
+	if err != nil || energyRate != nil {
+		t.Fatalf("expected unconfigured energy rate, got rate=%+v err=%v", energyRate, err)
 	}
 }
