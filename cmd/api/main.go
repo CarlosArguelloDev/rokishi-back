@@ -43,10 +43,14 @@ func run(logger *slog.Logger) error {
 	machineTypeRepository := repository.NewMachineTypeRepository(pool)
 	machineRepository := repository.NewMachineRepository(pool)
 	machineStateRepository := repository.NewMachineStateRepository(pool)
+	materialRepository := repository.NewMaterialRepository(pool)
+	rateRepository := repository.NewRateRepository(pool)
 	locationService := service.NewLocationService(locationRepository)
 	machineTypeService := service.NewMachineTypeService(machineTypeRepository)
 	machineService := service.NewMachineService(machineRepository)
 	machineStateService := service.NewMachineStateService(machineStateRepository)
+	materialService := service.NewMaterialService(materialRepository)
+	rateService := service.NewRateService(rateRepository)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -61,6 +65,8 @@ func run(logger *slog.Logger) error {
 			MachineTypes:   machineTypeService,
 			Machines:       machineService,
 			MachineStates:  machineStateService,
+			Materials:      materialService,
+			Rates:          rateService,
 			AllowedOrigins: cfg.AllowedOrigins,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

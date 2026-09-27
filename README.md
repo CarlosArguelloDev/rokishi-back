@@ -99,6 +99,31 @@ Invoke-RestMethod 'http://localhost:8081/api/maquinas/1/historial-estados?desde=
 
 El filtro devuelve los periodos que se solapan con el rango solicitado. La migracion `000002_one_open_machine_state` agrega un indice unico parcial que impide tener dos periodos abiertos para la misma maquina. Debe aplicarse antes de desplegar esta version de la API.
 
+## Materiales y tarifas de la Fase 5
+
+Materiales:
+
+- `POST /api/materiales`
+- `GET /api/materiales?tipo=...&marca=...&color=...&activo=true`
+- `GET /api/materiales/{id}`
+- `PATCH /api/materiales/{id}`
+
+Tarifas:
+
+- `GET /api/maquinas/{id}/tarifa`
+- `PUT /api/maquinas/{id}/tarifa`
+- `GET /api/locaciones/{id}/tarifa-energia`
+- `PUT /api/locaciones/{id}/tarifa-energia`
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/materiales -Method Post -ContentType 'application/json' -Body '{"nombre":"PLA negro","tipo":"Filamento","marca":"Polymaker","color":"Negro","costo_por_kg":420.50,"stock_kg":2.500}'
+Invoke-RestMethod 'http://localhost:8081/api/materiales?tipo=Filamento&activo=true'
+Invoke-RestMethod http://localhost:8081/api/maquinas/1/tarifa -Method Put -ContentType 'application/json' -Body '{"costo_interno_hora":25,"precio_venta_hora":70,"costo_preparacion":15}'
+Invoke-RestMethod http://localhost:8081/api/locaciones/1/tarifa-energia -Method Put -ContentType 'application/json' -Body '{"costo_por_kwh":2.3456}'
+```
+
+Los importes y existencias deben ser mayores o iguales a cero. `PUT` crea o reemplaza la configuracion de la maquina o locacion indicada sin modificar otras tarifas. Un `GET` devuelve `404` cuando la tarifa aun no se ha configurado. La Fase 5 usa las tablas del esquema inicial y no requiere una migracion nueva.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:
