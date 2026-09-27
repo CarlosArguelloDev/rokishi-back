@@ -169,5 +169,8 @@ func translateError(err error) error {
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return ErrConflict
 	}
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return ErrReferenceMissing
+	}
 	return err
 }

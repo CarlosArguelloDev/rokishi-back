@@ -12,6 +12,7 @@ type Dependencies struct {
 	Ping           func(context.Context) error
 	Locations      handlers.LocationService
 	MachineTypes   handlers.MachineTypeService
+	Machines       handlers.MachineService
 	AllowedOrigins []string
 }
 
@@ -31,6 +32,12 @@ func New(dependencies Dependencies) http.Handler {
 	r.Get("/api/tipos-maquina", machineTypes.List)
 	r.Get("/api/tipos-maquina/{id}", machineTypes.Get)
 	r.Patch("/api/tipos-maquina/{id}", machineTypes.Update)
+
+	machines := handlers.NewMachineHandler(dependencies.Machines)
+	r.Post("/api/maquinas", machines.Create)
+	r.Get("/api/maquinas", machines.List)
+	r.Get("/api/maquinas/{id}", machines.Get)
+	r.Patch("/api/maquinas/{id}", machines.Update)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		handlers.WriteError(w, http.StatusNotFound, "not_found", "Ruta no encontrada")
 	})

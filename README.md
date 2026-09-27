@@ -1,6 +1,6 @@
 # Rokishi API
 
-API REST en Go para gestion de produccion. Incluye el endpoint de salud y los catalogos de locaciones y tipos de maquina.
+API REST en Go para gestion de produccion. Incluye salud, catalogos de locaciones y tipos de maquina, y administracion de maquinas.
 
 Para publicar la API con presupuesto limitado y automatizarla desde Jenkins, consulta [DEPLOY_HEROKU_JENKINS.md](DEPLOY_HEROKU_JENKINS.md).
 
@@ -66,6 +66,18 @@ Invoke-RestMethod http://localhost:8081/api/locaciones/1 -Method Patch -ContentT
 ```
 
 Los codigos de locacion y los nombres de tipo duplicados devuelven `409`. Los identificadores inexistentes devuelven `404`; los datos invalidos devuelven `422`.
+
+## Maquinas de la Fase 3
+
+La API expone `POST /api/maquinas`, `GET /api/maquinas`, `GET /api/maquinas/{id}` y `PATCH /api/maquinas/{id}`. La lista admite `locacion_id`, `tipo_maquina_id`, `activa` y `q`; este ultimo busca por codigo o nombre.
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/maquinas -Method Post -ContentType 'application/json' -Body '{"locacion_id":1,"tipo_maquina_id":1,"codigo":"IMP-01","nombre":"Prusa MK4"}'
+Invoke-RestMethod 'http://localhost:8081/api/maquinas?locacion_id=1&activa=true&q=prusa'
+Invoke-RestMethod http://localhost:8081/api/maquinas/1 -Method Patch -ContentType 'application/json' -Body '{"locacion_id":2,"activa":false}'
+```
+
+La locacion y el tipo de maquina deben existir. Un codigo duplicado devuelve `409`; referencias o datos invalidos devuelven `422`. Las maquinas se desactivan con `PATCH`, no se eliminan fisicamente. La Fase 3 usa el esquema inicial existente y no requiere una migracion adicional.
 
 ## Docker
 

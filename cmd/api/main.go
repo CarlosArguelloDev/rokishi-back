@@ -41,8 +41,10 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 	locationRepository := repository.NewLocationRepository(pool)
 	machineTypeRepository := repository.NewMachineTypeRepository(pool)
+	machineRepository := repository.NewMachineRepository(pool)
 	locationService := service.NewLocationService(locationRepository)
 	machineTypeService := service.NewMachineTypeService(machineTypeRepository)
+	machineService := service.NewMachineService(machineRepository)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -55,6 +57,7 @@ func run(logger *slog.Logger) error {
 			Ping:           pool.Ping,
 			Locations:      locationService,
 			MachineTypes:   machineTypeService,
+			Machines:       machineService,
 			AllowedOrigins: cfg.AllowedOrigins,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
