@@ -196,6 +196,18 @@ Cada concepto de cotizacion genera un trabajo con sus estimaciones. Un resultado
 
 En un pedido directo, `maquina_id` es opcional y puede asignarse despues. Si `plataforma_venta` tiene valor, el origen queda como `PLATAFORMA`; de lo contrario se deriva del tipo de cliente (`CLIENTE` o `EMPRESA`). La respuesta conserva `cliente_tipo`, por lo que una compra de plataforma tambien identifica si el comprador es persona o empresa.
 
+## Metricas de la Fase 9
+
+`GET /api/metricas/resumen` calcula indicadores directamente desde el historial operativo y los intentos de trabajo. Admite `desde`, `hasta` en formato RFC3339 y filtros opcionales `maquina_id`, `locacion_id` y `tipo_maquina_id`. El rango predeterminado son los ultimos 30 dias y `hasta` es exclusivo.
+
+```powershell
+Invoke-RestMethod 'http://localhost:8081/api/metricas/resumen?desde=2026-09-01T00:00:00Z&hasta=2026-10-01T00:00:00Z&locacion_id=1'
+```
+
+Las horas de cada estado son la interseccion entre sus periodos y el rango consultado. `horas_productivas` equivale a `TRABAJANDO`; `horas_improductivas` incluye todo estado registrado distinto de `TRABAJANDO`. La utilizacion es `horas_trabajando / horas_registradas * 100`. La tasa de exito es `trabajos completados / intentos terminados * 100`; los fallos se cuentan como intentos porque un trabajo puede reimprimirse hasta completarse.
+
+El material consumido y desperdiciado suma todos los intentos terminados. Los ingresos estimados usan `precio_sugerido` y la utilidad usa `precio_sugerido - subtotal` del concepto historico que origino cada trabajo completado. Los pedidos directos participan en las metricas operativas, pero se reportan como `trabajos_sin_datos_financieros`. Los periodos sin historial no se infieren. Esta fase no agrega migraciones ni almacena agregados.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:

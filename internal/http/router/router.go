@@ -19,6 +19,7 @@ type Dependencies struct {
 	Customers      handlers.CustomerService
 	Quotes         handlers.QuoteService
 	Production     handlers.ProductionService
+	Metrics        handlers.MetricsService
 	AllowedOrigins []string
 }
 
@@ -85,6 +86,9 @@ func New(dependencies Dependencies) http.Handler {
 	r.Patch("/api/trabajos/{id}/asignacion", production.AssignMachine)
 	r.Post("/api/trabajos/{id}/iniciar", production.StartWork)
 	r.Post("/api/trabajos/{id}/finalizar", production.FinishWork)
+
+	metrics := handlers.NewMetricsHandler(dependencies.Metrics)
+	r.Get("/api/metricas/resumen", metrics.Summary)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		handlers.WriteError(w, http.StatusNotFound, "not_found", "Ruta no encontrada")
 	})
