@@ -12,6 +12,7 @@ type MachineState struct {
 type MachineStatePeriod struct {
 	ID        int64      `json:"id"`
 	MachineID int64      `json:"maquina_id"`
+	WorkID    *int64     `json:"trabajo_id"`
 	StateID   int64      `json:"estado_maquina_id"`
 	StateCode string     `json:"estado_codigo"`
 	StateName string     `json:"estado_nombre"`

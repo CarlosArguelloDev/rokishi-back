@@ -86,7 +86,7 @@ func (r *MachineStateRepository) MachineExists(ctx context.Context, machineID in
 
 func (r *MachineStateRepository) Current(ctx context.Context, machineID int64) (models.MachineStatePeriod, error) {
 	period, err := scanMachineStatePeriod(r.db.QueryRow(ctx, `
-		SELECT h.id, h.maquina_id, h.estado_maquina_id, e.codigo, e.nombre,
+		SELECT h.id, h.maquina_id, h.trabajo_id, h.estado_maquina_id, e.codigo, e.nombre,
 			h.fecha_inicio, h.fecha_fin, h.notas
 		FROM historial_estados_maquina h
 		JOIN estados_maquina e ON e.id = h.estado_maquina_id
@@ -96,7 +96,7 @@ func (r *MachineStateRepository) Current(ctx context.Context, machineID int64) (
 
 func (r *MachineStateRepository) History(ctx context.Context, machineID int64, filters StateHistoryFilters) ([]models.MachineStatePeriod, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT h.id, h.maquina_id, h.estado_maquina_id, e.codigo, e.nombre,
+		SELECT h.id, h.maquina_id, h.trabajo_id, h.estado_maquina_id, e.codigo, e.nombre,
 			h.fecha_inicio, h.fecha_fin, h.notas
 		FROM historial_estados_maquina h
 		JOIN estados_maquina e ON e.id = h.estado_maquina_id
@@ -140,7 +140,7 @@ func (r *MachineStateRepository) Change(ctx context.Context, machineID, stateID 
 	}
 
 	previous, err := scanMachineStatePeriod(tx.QueryRow(ctx, `
-		SELECT h.id, h.maquina_id, h.estado_maquina_id, e.codigo, e.nombre,
+		SELECT h.id, h.maquina_id, h.trabajo_id, h.estado_maquina_id, e.codigo, e.nombre,
 			h.fecha_inicio, h.fecha_fin, h.notas
 		FROM historial_estados_maquina h
 		JOIN estados_maquina e ON e.id = h.estado_maquina_id
@@ -150,6 +150,9 @@ func (r *MachineStateRepository) Change(ctx context.Context, machineID, stateID 
 	switch {
 	case err == nil:
 		previousPointer = &previous
+		if previous.WorkID != nil {
+			return models.MachineStateChange{}, ErrInvalidOperation
+		}
 		if previous.StateID == stateID {
 			return models.MachineStateChange{}, ErrStateUnchanged
 		}
@@ -180,7 +183,7 @@ func (r *MachineStateRepository) Change(ctx context.Context, machineID, stateID 
 			VALUES ($1, $2, $3, $4)
 			RETURNING *
 		)
-		SELECT i.id, i.maquina_id, i.estado_maquina_id, e.codigo, e.nombre,
+		SELECT i.id, i.maquina_id, i.trabajo_id, i.estado_maquina_id, e.codigo, e.nombre,
 			i.fecha_inicio, i.fecha_fin, i.notas
 		FROM inserted i
 		JOIN estados_maquina e ON e.id = i.estado_maquina_id`, machineID, stateID, startedAt, notes))
@@ -204,6 +207,7 @@ func scanMachineStatePeriod(row scanner) (models.MachineStatePeriod, error) {
 	err := row.Scan(
 		&period.ID,
 		&period.MachineID,
+		&period.WorkID,
 		&period.StateID,
 		&period.StateCode,
 		&period.StateName,

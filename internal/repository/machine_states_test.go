@@ -78,7 +78,7 @@ func (m stateTestTransactionManager) Begin(context.Context) (stateTransaction, e
 }
 
 func statePeriodRow(id, machineID, stateID int64, code, name string, startedAt time.Time) scanner {
-	return stateTestRow{values: []any{id, machineID, stateID, code, name, startedAt, nil, nil}}
+	return stateTestRow{values: []any{id, machineID, nil, stateID, code, name, startedAt, nil, nil}}
 }
 
 func TestMachineStateRepositoryChangeCommitsTransaction(t *testing.T) {
@@ -131,6 +131,23 @@ func TestMachineStateRepositoryRejectsInvalidTransition(t *testing.T) {
 	repository := &MachineStateRepository{db: stateTestDB{}, transactions: stateTestTransactionManager{tx: tx}}
 	if _, err := repository.Change(context.Background(), 7, 2, start, nil); !errors.Is(err, ErrInvalidStateTime) {
 		t.Fatalf("expected invalid transition time, got %v", err)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Fatalf("unexpected transaction state: committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestMachineStateRepositoryRejectsManualChangeDuringWork(t *testing.T) {
+	start := time.Date(2026, 9, 26, 11, 0, 0, 0, time.UTC)
+	workID := int64(12)
+	tx := &stateTestTransaction{rows: []scanner{
+		stateTestRow{values: []any{int64(7)}},
+		stateTestRow{values: []any{int64(4), "MANTENIMIENTO", "Mantenimiento", nil}},
+		stateTestRow{values: []any{int64(8), int64(7), &workID, int64(1), "TRABAJANDO", "Trabajando", start.Add(-time.Hour), nil, nil}},
+	}}
+	repository := &MachineStateRepository{db: stateTestDB{}, transactions: stateTestTransactionManager{tx: tx}}
+	if _, err := repository.Change(context.Background(), 7, 4, start, nil); !errors.Is(err, ErrInvalidOperation) {
+		t.Fatalf("expected active work rejection, got %v", err)
 	}
 	if tx.committed || !tx.rolledBack {
 		t.Fatalf("unexpected transaction state: committed=%v rolledBack=%v", tx.committed, tx.rolledBack)

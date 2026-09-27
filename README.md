@@ -170,6 +170,26 @@ Invoke-RestMethod http://localhost:8081/api/cotizaciones/1/cambios-estado -Metho
 
 Una cotizacion inicia en `BORRADOR`. Puede pasar a `ENVIADA` o `CANCELADA`; desde `ENVIADA` puede pasar a `ACEPTADA`, `RECHAZADA`, `VENCIDA` o `CANCELADA`. Los estados finales no admiten transiciones. La creacion guarda en una transaccion todos los conceptos y una copia de las tarifas y costos utilizados, por lo que cambios posteriores no alteran el historial. Una cotizacion aceptada queda disponible para la futura fase de pedidos, pero todavia no genera uno.
 
+## Pedidos y produccion de la Fase 8
+
+La migracion `000004_orders_and_production` agrega pedidos, trabajos e intentos de produccion. Tambien relaciona los periodos operativos `TRABAJANDO` con el trabajo que los origino. Debe aplicarse antes de desplegar esta version de la API.
+
+- `POST /api/cotizaciones/{id}/pedido`: convierte una cotizacion aceptada en un pedido.
+- `GET /api/pedidos?cliente_id=...&estado=PENDIENTE`: lista pedidos.
+- `GET /api/pedidos/{id}`: devuelve trabajos e intentos.
+- `PATCH /api/trabajos/{id}/asignacion`: asigna una maquina activa del tipo requerido.
+- `POST /api/trabajos/{id}/iniciar`: abre un intento y cambia la maquina a `TRABAJANDO`.
+- `POST /api/trabajos/{id}/finalizar`: registra resultado, consumo y desperdicio.
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/cotizaciones/7/pedido -Method Post
+Invoke-RestMethod http://localhost:8081/api/trabajos/9/asignacion -Method Patch -ContentType 'application/json' -Body '{"maquina_id":1}'
+Invoke-RestMethod http://localhost:8081/api/trabajos/9/iniciar -Method Post
+Invoke-RestMethod http://localhost:8081/api/trabajos/9/finalizar -Method Post -ContentType 'application/json' -Body '{"resultado":"EXITOSO","material_consumido_gramos":98.5,"desperdicio_gramos":1.5}'
+```
+
+Cada concepto de cotizacion genera un trabajo con sus estimaciones. Un resultado `FALLIDO` conserva el intento y devuelve el trabajo a `PENDIENTE`, permitiendo una reimpresion. Un resultado `EXITOSO` completa el trabajo; el pedido se completa cuando todos sus trabajos terminan exitosamente. Una maquina solo puede tener un intento abierto y su estado manual no puede cambiar mientras un trabajo controla el periodo operativo.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:

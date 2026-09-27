@@ -47,6 +47,7 @@ func run(logger *slog.Logger) error {
 	rateRepository := repository.NewRateRepository(pool)
 	customerRepository := repository.NewCustomerRepository(pool)
 	quoteRepository := repository.NewQuoteRepository(pool)
+	productionRepository := repository.NewProductionRepository(pool)
 	locationService := service.NewLocationService(locationRepository)
 	machineTypeService := service.NewMachineTypeService(machineTypeRepository)
 	machineService := service.NewMachineService(machineRepository)
@@ -55,6 +56,7 @@ func run(logger *slog.Logger) error {
 	rateService := service.NewRateService(rateRepository)
 	customerService := service.NewCustomerService(customerRepository)
 	quoteService := service.NewQuoteService(quoteRepository)
+	productionService := service.NewProductionService(productionRepository)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -73,6 +75,7 @@ func run(logger *slog.Logger) error {
 			Rates:          rateService,
 			Customers:      customerService,
 			Quotes:         quoteService,
+			Production:     productionService,
 			AllowedOrigins: cfg.AllowedOrigins,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

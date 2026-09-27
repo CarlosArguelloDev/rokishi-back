@@ -88,6 +88,8 @@ func (s *MachineStateService) Change(ctx context.Context, machineID int64, input
 		return models.MachineStateChange{}, ErrStateUnchanged
 	case errors.Is(err, repository.ErrInvalidStateTime):
 		return models.MachineStateChange{}, &ValidationError{Message: "La fecha del cambio debe ser posterior al inicio del estado actual"}
+	case errors.Is(err, repository.ErrInvalidOperation):
+		return models.MachineStateChange{}, &ValidationError{Message: "El estado de la maquina esta controlado por un trabajo en proceso"}
 	default:
 		return change, mapMachineRepositoryError(err)
 	}
