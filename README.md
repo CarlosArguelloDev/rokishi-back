@@ -79,6 +79,26 @@ Invoke-RestMethod http://localhost:8081/api/maquinas/1 -Method Patch -ContentTyp
 
 La locacion y el tipo de maquina deben existir. Un codigo duplicado devuelve `409`; referencias o datos invalidos devuelven `422`. Las maquinas se desactivan con `PATCH`, no se eliminan fisicamente. La Fase 3 usa el esquema inicial existente y no requiere una migracion adicional.
 
+## Estados e historial de la Fase 4
+
+La API expone:
+
+- `GET /api/estados-maquina`
+- `GET /api/maquinas/{id}/estado-actual`
+- `POST /api/maquinas/{id}/cambios-estado`
+- `GET /api/maquinas/{id}/historial-estados?desde=...&hasta=...`
+
+El primer cambio abre el primer periodo y devuelve `estado_anterior: null`. Los cambios posteriores cierran el periodo actual y crean el nuevo dentro de una sola transaccion. `fecha_inicio` es opcional y usa la hora del servidor cuando se omite; si se proporciona debe ser RFC3339 y posterior al inicio del estado actual.
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/estados-maquina
+Invoke-RestMethod http://localhost:8081/api/maquinas/1/cambios-estado -Method Post -ContentType 'application/json' -Body '{"estado_maquina_id":2,"notas":"Lista para operar"}'
+Invoke-RestMethod http://localhost:8081/api/maquinas/1/estado-actual
+Invoke-RestMethod 'http://localhost:8081/api/maquinas/1/historial-estados?desde=2026-09-01T00:00:00Z&hasta=2026-10-01T00:00:00Z'
+```
+
+El filtro devuelve los periodos que se solapan con el rango solicitado. La migracion `000002_one_open_machine_state` agrega un indice unico parcial que impide tener dos periodos abiertos para la misma maquina. Debe aplicarse antes de desplegar esta version de la API.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:

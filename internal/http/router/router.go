@@ -13,6 +13,7 @@ type Dependencies struct {
 	Locations      handlers.LocationService
 	MachineTypes   handlers.MachineTypeService
 	Machines       handlers.MachineService
+	MachineStates  handlers.MachineStateService
 	AllowedOrigins []string
 }
 
@@ -38,6 +39,12 @@ func New(dependencies Dependencies) http.Handler {
 	r.Get("/api/maquinas", machines.List)
 	r.Get("/api/maquinas/{id}", machines.Get)
 	r.Patch("/api/maquinas/{id}", machines.Update)
+
+	machineStates := handlers.NewMachineStateHandler(dependencies.MachineStates)
+	r.Get("/api/estados-maquina", machineStates.List)
+	r.Get("/api/maquinas/{id}/estado-actual", machineStates.Current)
+	r.Post("/api/maquinas/{id}/cambios-estado", machineStates.Change)
+	r.Get("/api/maquinas/{id}/historial-estados", machineStates.History)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		handlers.WriteError(w, http.StatusNotFound, "not_found", "Ruta no encontrada")
 	})
