@@ -11,12 +11,44 @@ import (
 )
 
 type fakeQuoteRepository struct {
-	data repository.QuoteData
-	err  error
+	data           repository.QuoteData
+	quote          models.Quote
+	quotes         []models.Quote
+	statuses       []models.QuoteStatus
+	created        repository.CreateQuoteData
+	customerExists bool
+	changedStatus  string
+	err            error
 }
 
-func (f fakeQuoteRepository) GetCalculationData(context.Context, int64, int64) (repository.QuoteData, error) {
+func (f *fakeQuoteRepository) GetCalculationData(context.Context, int64, int64) (repository.QuoteData, error) {
 	return f.data, f.err
+}
+
+func (f *fakeQuoteRepository) ActiveCustomerExists(context.Context, int64) (bool, error) {
+	return f.customerExists, f.err
+}
+
+func (f *fakeQuoteRepository) Create(_ context.Context, data repository.CreateQuoteData) (models.Quote, error) {
+	f.created = data
+	return f.quote, f.err
+}
+
+func (f *fakeQuoteRepository) List(context.Context, repository.QuoteFilters) ([]models.Quote, error) {
+	return f.quotes, f.err
+}
+
+func (f *fakeQuoteRepository) Get(context.Context, int64) (models.Quote, error) {
+	return f.quote, f.err
+}
+
+func (f *fakeQuoteRepository) ListStatuses(context.Context) ([]models.QuoteStatus, error) {
+	return f.statuses, f.err
+}
+
+func (f *fakeQuoteRepository) ChangeStatus(_ context.Context, _ int64, _ int64, status string) (models.Quote, error) {
+	f.changedStatus = status
+	return models.Quote{ID: f.quote.ID, StatusCode: status}, f.err
 }
 
 func decimalPointer(value string) *string { return &value }
@@ -24,10 +56,13 @@ func decimalPointer(value string) *string { return &value }
 func validQuoteData() repository.QuoteData {
 	return repository.QuoteData{
 		MachineID:         1,
+		MachineCode:       "IMP-01",
+		MachineName:       "Prusa MK4",
 		MachineActive:     true,
 		LocationID:        1,
 		PowerWatts:        decimalPointer("350.00"),
 		MaterialID:        2,
+		MaterialName:      "PLA negro",
 		MaterialActive:    true,
 		MaterialCostPerKG: "400.00",
 		InternalCostHour:  decimalPointer("25.00"),
@@ -38,7 +73,7 @@ func validQuoteData() repository.QuoteData {
 }
 
 func TestQuoteServiceCalculatesKnownResult(t *testing.T) {
-	quoteService := NewQuoteService(fakeQuoteRepository{data: validQuoteData()})
+	quoteService := NewQuoteService(&fakeQuoteRepository{data: validQuoteData()})
 	calculation, err := quoteService.Calculate(context.Background(), CalculateQuoteInput{
 		MachineID: 1, MaterialID: 2, MaterialGrams: "100", DurationMinutes: 120, PieceCount: 2,
 	})
@@ -57,7 +92,7 @@ func TestQuoteServiceCalculatesKnownResult(t *testing.T) {
 }
 
 func TestQuoteServiceRejectsInvalidInput(t *testing.T) {
-	quoteService := NewQuoteService(fakeQuoteRepository{data: validQuoteData()})
+	quoteService := NewQuoteService(&fakeQuoteRepository{data: validQuoteData()})
 	inputs := []CalculateQuoteInput{
 		{MaterialID: 2, MaterialGrams: "100", DurationMinutes: 60, PieceCount: 1},
 		{MachineID: 1, MaterialGrams: "100", DurationMinutes: 60, PieceCount: 1},
@@ -90,7 +125,7 @@ func TestQuoteServiceRequiresActiveConfiguredResources(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			data := validQuoteData()
 			test.edit(&data)
-			quoteService := NewQuoteService(fakeQuoteRepository{data: data})
+			quoteService := NewQuoteService(&fakeQuoteRepository{data: data})
 			_, err := quoteService.Calculate(context.Background(), CalculateQuoteInput{
 				MachineID: 1, MaterialID: 2, MaterialGrams: "100", DurationMinutes: 60, PieceCount: 1,
 			})
@@ -106,11 +141,65 @@ func TestQuoteServiceRequiresActiveConfiguredResources(t *testing.T) {
 }
 
 func TestQuoteServiceMapsMissingResource(t *testing.T) {
-	quoteService := NewQuoteService(fakeQuoteRepository{err: repository.ErrNotFound})
+	quoteService := NewQuoteService(&fakeQuoteRepository{err: repository.ErrNotFound})
 	_, err := quoteService.Calculate(context.Background(), CalculateQuoteInput{
 		MachineID: 1, MaterialID: 2, MaterialGrams: "100", DurationMinutes: 60, PieceCount: 1,
 	})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestQuoteServiceCreatesPersistentSnapshot(t *testing.T) {
+	repository := &fakeQuoteRepository{
+		data: validQuoteData(), customerExists: true,
+		quote: models.Quote{ID: 7, CustomerID: 3, StatusCode: "BORRADOR"},
+	}
+	quoteService := NewQuoteService(repository)
+	quote, err := quoteService.Create(context.Background(), CreateQuoteInput{
+		CustomerID: 3,
+		Concepts: []CreateQuoteConceptInput{{
+			Description: decimalPointer("Pieza principal"), MachineID: 1, MaterialID: 2,
+			MaterialGrams: "100", DurationMinutes: 120, PieceCount: 2,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.ID != 7 || len(repository.created.Concepts) != 1 {
+		t.Fatalf("unexpected quote or snapshot: quote=%+v snapshot=%+v", quote, repository.created)
+	}
+	if repository.created.TotalCost != 10675 || repository.created.TotalSuggestedPrice != 19675 {
+		t.Fatalf("unexpected totals: %+v", repository.created)
+	}
+	snapshot := repository.created.Concepts[0]
+	if snapshot.Rates.MachineCode != "IMP-01" || snapshot.Rates.MaterialCostPerKG != "400.00" || snapshot.Calculation.SuggestedPrice != 19675 {
+		t.Fatalf("unexpected concept snapshot: %+v", snapshot)
+	}
+}
+
+func TestQuoteServiceValidatesCustomerAndConcepts(t *testing.T) {
+	quoteService := NewQuoteService(&fakeQuoteRepository{data: validQuoteData()})
+	if _, err := quoteService.Create(context.Background(), CreateQuoteInput{CustomerID: 3}); !isValidationError(err) {
+		t.Fatalf("expected missing customer validation, got %v", err)
+	}
+	quoteService = NewQuoteService(&fakeQuoteRepository{data: validQuoteData(), customerExists: true})
+	if _, err := quoteService.Create(context.Background(), CreateQuoteInput{CustomerID: 3}); !isValidationError(err) {
+		t.Fatalf("expected missing concepts validation, got %v", err)
+	}
+}
+
+func TestQuoteServiceControlsStatusTransitions(t *testing.T) {
+	repository := &fakeQuoteRepository{quote: models.Quote{ID: 7, StatusID: 1, StatusCode: "BORRADOR"}}
+	quoteService := NewQuoteService(repository)
+	updated, err := quoteService.ChangeStatus(context.Background(), 7, "enviada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.StatusCode != "ENVIADA" || repository.changedStatus != "ENVIADA" {
+		t.Fatalf("unexpected status update: %+v", updated)
+	}
+	if _, err := quoteService.ChangeStatus(context.Background(), 7, "ACEPTADA"); !isValidationError(err) {
+		t.Fatalf("expected invalid direct transition, got %v", err)
 	}
 }

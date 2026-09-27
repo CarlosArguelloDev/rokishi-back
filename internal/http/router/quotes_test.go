@@ -36,6 +36,35 @@ func (fakeQuoteService) Calculate(_ context.Context, input service.CalculateQuot
 	}, nil
 }
 
+func (fakeQuoteService) Create(_ context.Context, input service.CreateQuoteInput) (models.Quote, error) {
+	if input.CustomerID == 99 {
+		return models.Quote{}, &service.ValidationError{Message: "Cliente invalido"}
+	}
+	return models.Quote{ID: 7, CustomerID: input.CustomerID, StatusCode: "BORRADOR", TotalSuggestedPrice: 19675}, nil
+}
+
+func (fakeQuoteService) List(context.Context, service.QuoteFilters) ([]models.Quote, error) {
+	return []models.Quote{{ID: 7, CustomerID: 3, StatusCode: "BORRADOR"}}, nil
+}
+
+func (fakeQuoteService) Get(_ context.Context, id int64) (models.Quote, error) {
+	if id == 99 {
+		return models.Quote{}, service.ErrNotFound
+	}
+	return models.Quote{ID: id, CustomerID: 3, StatusID: 1, StatusCode: "BORRADOR", Concepts: []models.QuoteConcept{}}, nil
+}
+
+func (fakeQuoteService) ListStatuses(context.Context) ([]models.QuoteStatus, error) {
+	return []models.QuoteStatus{{ID: 1, Code: "BORRADOR", Name: "Borrador"}}, nil
+}
+
+func (fakeQuoteService) ChangeStatus(_ context.Context, id int64, status string) (models.Quote, error) {
+	if status == "ACEPTADA" {
+		return models.Quote{}, &service.ValidationError{Message: "Transicion invalida"}
+	}
+	return models.Quote{ID: id, StatusCode: status}, nil
+}
+
 func TestQuoteEndpoint(t *testing.T) {
 	handler := New(Dependencies{Quotes: fakeQuoteService{}})
 	tests := []struct {
@@ -55,6 +84,37 @@ func TestQuoteEndpoint(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/api/cotizaciones/calcular", bytes.NewBufferString(test.body))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, test.status, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), test.contains) {
+				t.Fatalf("body = %s, want it to contain %s", response.Body.String(), test.contains)
+			}
+		})
+	}
+}
+
+func TestPersistentQuoteEndpoints(t *testing.T) {
+	handler := New(Dependencies{Quotes: fakeQuoteService{}})
+	tests := []struct {
+		name, method, path, body string
+		status                   int
+		contains                 string
+	}{
+		{"create quote", http.MethodPost, "/api/cotizaciones", `{"cliente_id":3,"conceptos":[{"maquina_id":1,"material_id":2,"cantidad_material_gramos":100,"duracion_minutos":120,"cantidad_piezas":2}]}`, http.StatusCreated, `"estado_codigo":"BORRADOR"`},
+		{"invalid customer", http.MethodPost, "/api/cotizaciones", `{"cliente_id":99,"conceptos":[]}`, http.StatusUnprocessableEntity, `"code":"validation_failed"`},
+		{"list quotes", http.MethodGet, "/api/cotizaciones?cliente_id=3&estado=BORRADOR", "", http.StatusOK, `"id":7`},
+		{"get quote", http.MethodGet, "/api/cotizaciones/7", "", http.StatusOK, `"estado_codigo":"BORRADOR"`},
+		{"missing quote", http.MethodGet, "/api/cotizaciones/99", "", http.StatusNotFound, `"code":"not_found"`},
+		{"list statuses", http.MethodGet, "/api/estados-cotizacion", "", http.StatusOK, `"codigo":"BORRADOR"`},
+		{"change status", http.MethodPost, "/api/cotizaciones/7/cambios-estado", `{"estado_codigo":"ENVIADA"}`, http.StatusOK, `"estado_codigo":"ENVIADA"`},
+		{"invalid transition", http.MethodPost, "/api/cotizaciones/7/cambios-estado", `{"estado_codigo":"ACEPTADA"}`, http.StatusUnprocessableEntity, `"code":"validation_failed"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, bytes.NewBufferString(test.body))
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != test.status {

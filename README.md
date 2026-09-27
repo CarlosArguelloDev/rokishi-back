@@ -143,6 +143,33 @@ La formula es:
 
 Cada componente monetario se redondea a centavos antes de sumar. La API usa aritmetica racional para evitar errores binarios de punto flotante. Devuelve `422 missing_configuration` si falta la potencia, la tarifa de maquina o la tarifa electrica, y `422 validation_failed` si la maquina o el material esta inactivo. Esta fase no persiste cotizaciones y no requiere una migracion nueva.
 
+## Clientes y cotizaciones persistentes de la Fase 7
+
+La migracion `000003_persistent_quotes` agrega clientes, estados de cotizacion, cotizaciones y conceptos con snapshots de cantidades, tarifas y costos. Debe aplicarse antes de desplegar esta version de la API.
+
+Clientes:
+
+- `POST /api/clientes`
+- `GET /api/clientes?activo=true&q=...`
+- `GET /api/clientes/{id}`
+- `PATCH /api/clientes/{id}`
+
+Cotizaciones:
+
+- `POST /api/cotizaciones`
+- `GET /api/cotizaciones?cliente_id=...&estado=BORRADOR`
+- `GET /api/cotizaciones/{id}`
+- `GET /api/estados-cotizacion`
+- `POST /api/cotizaciones/{id}/cambios-estado`
+
+```powershell
+Invoke-RestMethod http://localhost:8081/api/clientes -Method Post -ContentType 'application/json' -Body '{"nombre":"Taller Norte","correo":"ventas@example.com"}'
+Invoke-RestMethod http://localhost:8081/api/cotizaciones -Method Post -ContentType 'application/json' -Body '{"cliente_id":1,"conceptos":[{"descripcion":"Lote inicial","maquina_id":1,"material_id":1,"cantidad_material_gramos":100,"duracion_minutos":120,"cantidad_piezas":2}]}'
+Invoke-RestMethod http://localhost:8081/api/cotizaciones/1/cambios-estado -Method Post -ContentType 'application/json' -Body '{"estado_codigo":"ENVIADA"}'
+```
+
+Una cotizacion inicia en `BORRADOR`. Puede pasar a `ENVIADA` o `CANCELADA`; desde `ENVIADA` puede pasar a `ACEPTADA`, `RECHAZADA`, `VENCIDA` o `CANCELADA`. Los estados finales no admiten transiciones. La creacion guarda en una transaccion todos los conceptos y una copia de las tarifas y costos utilizados, por lo que cambios posteriores no alteran el historial. Una cotizacion aceptada queda disponible para la futura fase de pedidos, pero todavia no genera uno.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:
