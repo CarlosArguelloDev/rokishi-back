@@ -12,6 +12,7 @@ import (
 
 type ProductionService interface {
 	CreateOrder(context.Context, int64) (models.Order, error)
+	CreateDirectOrder(context.Context, service.CreateDirectOrderInput) (models.Order, error)
 	ListOrders(context.Context, service.OrderFilters) ([]models.Order, error)
 	GetOrder(context.Context, int64) (models.Order, error)
 	AssignMachine(context.Context, int64, int64) (models.Work, error)
@@ -38,12 +39,55 @@ type finishWorkRequest struct {
 	Notes            *string     `json:"notas"`
 }
 
+type createDirectWorkRequest struct {
+	Description           *string     `json:"descripcion"`
+	RequiredMachineTypeID int64       `json:"tipo_maquina_id"`
+	MachineID             *int64      `json:"maquina_id"`
+	MaterialID            int64       `json:"material_id"`
+	PieceCount            int64       `json:"cantidad_piezas"`
+	EstimatedMinutes      int64       `json:"duracion_estimada_minutos"`
+	EstimatedMaterial     json.Number `json:"material_estimado_gramos"`
+}
+
+type createDirectOrderRequest struct {
+	CustomerID    int64                     `json:"cliente_id"`
+	SalesPlatform *string                   `json:"plataforma_venta"`
+	Notes         *string                   `json:"notas"`
+	Works         []createDirectWorkRequest `json:"trabajos"`
+}
+
 func (h *ProductionHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	quoteID, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	order, err := h.service.CreateOrder(r.Context(), quoteID)
+	if err != nil {
+		writeProductionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, dataResponse[models.Order]{Data: order})
+}
+
+func (h *ProductionHandler) CreateDirectOrder(w http.ResponseWriter, r *http.Request) {
+	var request createDirectOrderRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_json", "El cuerpo JSON no es valido")
+		return
+	}
+	works := make([]service.CreateDirectWorkInput, 0, len(request.Works))
+	for _, work := range request.Works {
+		works = append(works, service.CreateDirectWorkInput{
+			Description: work.Description, RequiredMachineTypeID: work.RequiredMachineTypeID,
+			MachineID: work.MachineID, MaterialID: work.MaterialID,
+			PieceCount: work.PieceCount, EstimatedMinutes: work.EstimatedMinutes,
+			EstimatedMaterial: work.EstimatedMaterial.String(),
+		})
+	}
+	order, err := h.service.CreateDirectOrder(r.Context(), service.CreateDirectOrderInput{
+		CustomerID: request.CustomerID, SalesPlatform: request.SalesPlatform,
+		Notes: request.Notes, Works: works,
+	})
 	if err != nil {
 		writeProductionError(w, err)
 		return
@@ -140,7 +184,7 @@ func writeProductionError(w http.ResponseWriter, err error) {
 	case errors.As(err, &validationError):
 		WriteError(w, http.StatusUnprocessableEntity, "validation_failed", validationError.Message)
 	case errors.Is(err, service.ErrNotFound):
-		WriteError(w, http.StatusNotFound, "not_found", "El pedido, trabajo, cotizacion o maquina no existe")
+		WriteError(w, http.StatusNotFound, "not_found", "El pedido, trabajo, cliente, cotizacion o recurso no existe")
 	case errors.Is(err, service.ErrConflict):
 		WriteError(w, http.StatusConflict, "order_exists", "La cotizacion ya tiene un pedido")
 	default:

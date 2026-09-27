@@ -4,6 +4,7 @@ import "time"
 
 type Customer struct {
 	ID            int64     `json:"id"`
+	Type          string    `json:"tipo"`
 	Name          string    `json:"nombre"`
 	Email         *string   `json:"correo"`
 	Phone         *string   `json:"telefono"`

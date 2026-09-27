@@ -45,7 +45,7 @@ func TestCustomerServiceCreatesUpdatesAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if customer.Name != "Taller Norte" || customer.Email == nil || *customer.Email != "ventas@example.com" || !customer.Active {
+	if customer.Type != "PERSONA" || customer.Name != "Taller Norte" || customer.Email == nil || *customer.Email != "ventas@example.com" || !customer.Active {
 		t.Fatalf("unexpected customer: %+v", customer)
 	}
 
@@ -75,6 +75,7 @@ func TestCustomerServiceRejectsInvalidData(t *testing.T) {
 	for _, input := range []CreateCustomerInput{
 		{},
 		{Name: "Cliente", Email: &invalidEmail},
+		{Name: "Cliente", Type: "MAYORISTA"},
 	} {
 		if _, err := customerService.Create(context.Background(), input); !isValidationError(err) {
 			t.Fatalf("expected validation error for %+v, got %v", input, err)

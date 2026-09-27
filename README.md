@@ -174,7 +174,10 @@ Una cotizacion inicia en `BORRADOR`. Puede pasar a `ENVIADA` o `CANCELADA`; desd
 
 La migracion `000004_orders_and_production` agrega pedidos, trabajos e intentos de produccion. Tambien relaciona los periodos operativos `TRABAJANDO` con el trabajo que los origino. Debe aplicarse antes de desplegar esta version de la API.
 
+La migracion `000005_direct_orders` agrega el tipo `PERSONA` o `EMPRESA` a los clientes y permite pedidos sin cotizacion. Tambien registra si el pedido llego directamente o desde una plataforma de venta. Debe aplicarse antes de desplegar una API que use pedidos directos.
+
 - `POST /api/cotizaciones/{id}/pedido`: convierte una cotizacion aceptada en un pedido.
+- `POST /api/pedidos`: crea un pedido directo con uno o varios trabajos.
 - `GET /api/pedidos?cliente_id=...&estado=PENDIENTE`: lista pedidos.
 - `GET /api/pedidos/{id}`: devuelve trabajos e intentos.
 - `PATCH /api/trabajos/{id}/asignacion`: asigna una maquina activa del tipo requerido.
@@ -183,12 +186,15 @@ La migracion `000004_orders_and_production` agrega pedidos, trabajos e intentos 
 
 ```powershell
 Invoke-RestMethod http://localhost:8081/api/cotizaciones/7/pedido -Method Post
+Invoke-RestMethod http://localhost:8081/api/pedidos -Method Post -ContentType 'application/json' -Body '{"cliente_id":1,"plataforma_venta":"Mercado Libre","notas":"Orden externa ML-123","trabajos":[{"descripcion":"Lote ecommerce","tipo_maquina_id":1,"maquina_id":1,"material_id":1,"cantidad_piezas":2,"duracion_estimada_minutos":120,"material_estimado_gramos":100}]}'
 Invoke-RestMethod http://localhost:8081/api/trabajos/9/asignacion -Method Patch -ContentType 'application/json' -Body '{"maquina_id":1}'
 Invoke-RestMethod http://localhost:8081/api/trabajos/9/iniciar -Method Post
 Invoke-RestMethod http://localhost:8081/api/trabajos/9/finalizar -Method Post -ContentType 'application/json' -Body '{"resultado":"EXITOSO","material_consumido_gramos":98.5,"desperdicio_gramos":1.5}'
 ```
 
 Cada concepto de cotizacion genera un trabajo con sus estimaciones. Un resultado `FALLIDO` conserva el intento y devuelve el trabajo a `PENDIENTE`, permitiendo una reimpresion. Un resultado `EXITOSO` completa el trabajo; el pedido se completa cuando todos sus trabajos terminan exitosamente. Una maquina solo puede tener un intento abierto y su estado manual no puede cambiar mientras un trabajo controla el periodo operativo.
+
+En un pedido directo, `maquina_id` es opcional y puede asignarse despues. Si `plataforma_venta` tiene valor, el origen queda como `PLATAFORMA`; de lo contrario se deriva del tipo de cliente (`CLIENTE` o `EMPRESA`). La respuesta conserva `cliente_tipo`, por lo que una compra de plataforma tambien identifica si el comprador es persona o empresa.
 
 ## Docker
 

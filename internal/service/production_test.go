@@ -14,6 +14,9 @@ type fakeProductionRepository struct {
 	order      models.Order
 	work       models.Work
 	machine    repository.MachineAssignmentData
+	customer   repository.DirectOrderCustomerData
+	references repository.DirectWorkReferenceData
+	directData *repository.CreateDirectOrderData
 	err        error
 	started    bool
 	finished   *repository.FinishWorkData
@@ -21,6 +24,19 @@ type fakeProductionRepository struct {
 }
 
 func (f *fakeProductionRepository) CreateOrder(context.Context, int64) (models.Order, error) {
+	return f.order, f.err
+}
+
+func (f *fakeProductionRepository) GetDirectOrderCustomerData(context.Context, int64) (repository.DirectOrderCustomerData, error) {
+	return f.customer, f.err
+}
+
+func (f *fakeProductionRepository) GetDirectWorkReferenceData(context.Context, int64, int64, *int64) (repository.DirectWorkReferenceData, error) {
+	return f.references, f.err
+}
+
+func (f *fakeProductionRepository) CreateDirectOrder(_ context.Context, data repository.CreateDirectOrderData) (models.Order, error) {
+	f.directData = &data
 	return f.order, f.err
 }
 
@@ -56,13 +72,14 @@ func (f *fakeProductionRepository) FinishWork(_ context.Context, _ int64, data r
 }
 
 func TestProductionServiceCreatesOrderFromAcceptedQuote(t *testing.T) {
-	repo := &fakeProductionRepository{order: models.Order{ID: 4, QuoteID: 7, Status: "PENDIENTE"}}
+	quoteID := int64(7)
+	repo := &fakeProductionRepository{order: models.Order{ID: 4, QuoteID: &quoteID, Status: "PENDIENTE"}}
 	production := NewProductionService(repo)
 	order, err := production.CreateOrder(context.Background(), 7)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if order.ID != 4 || order.QuoteID != 7 {
+	if order.ID != 4 || order.QuoteID == nil || *order.QuoteID != 7 {
 		t.Fatalf("unexpected order: %+v", order)
 	}
 
@@ -75,6 +92,53 @@ func TestProductionServiceCreatesOrderFromAcceptedQuote(t *testing.T) {
 		t.Fatalf("expected duplicate order conflict, got %v", err)
 	}
 }
+
+func TestProductionServiceCreatesDirectPlatformOrder(t *testing.T) {
+	machineID := int64(6)
+	platform := " Mercado Libre "
+	repo := &fakeProductionRepository{
+		order:      models.Order{ID: 12, Origin: "PLATAFORMA"},
+		customer:   repository.DirectOrderCustomerData{Type: "PERSONA", Active: true},
+		references: repository.DirectWorkReferenceData{MachineTypeExists: true, MaterialActive: true, MachineExists: true, MachineActive: true, MachineTypeID: int64Pointer(2)},
+	}
+	production := NewProductionService(repo)
+	order, err := production.CreateDirectOrder(context.Background(), CreateDirectOrderInput{
+		CustomerID: 3, SalesPlatform: &platform,
+		Works: []CreateDirectWorkInput{{
+			Description: intStringPointer(" Lote ecommerce "), RequiredMachineTypeID: 2,
+			MachineID: &machineID, MaterialID: 4, PieceCount: 3,
+			EstimatedMinutes: 90, EstimatedMaterial: "125.500",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.ID != 12 || repo.directData == nil || repo.directData.Origin != "PLATAFORMA" {
+		t.Fatalf("unexpected direct order data: %+v", repo.directData)
+	}
+	if repo.directData.SalesPlatform == nil || *repo.directData.SalesPlatform != "Mercado Libre" {
+		t.Fatalf("unexpected platform: %+v", repo.directData.SalesPlatform)
+	}
+	if repo.directData.Works[0].Description == nil || *repo.directData.Works[0].Description != "Lote ecommerce" {
+		t.Fatalf("unexpected work: %+v", repo.directData.Works[0])
+	}
+}
+
+func TestProductionServiceRejectsInvalidDirectOrder(t *testing.T) {
+	repo := &fakeProductionRepository{customer: repository.DirectOrderCustomerData{Type: "EMPRESA", Active: true}}
+	production := NewProductionService(repo)
+	if _, err := production.CreateDirectOrder(context.Background(), CreateDirectOrderInput{CustomerID: 2}); !isValidationError(err) {
+		t.Fatalf("expected empty work validation, got %v", err)
+	}
+	repo.customer.Active = false
+	if _, err := production.CreateDirectOrder(context.Background(), CreateDirectOrderInput{CustomerID: 2, Works: []CreateDirectWorkInput{{}}}); !isValidationError(err) {
+		t.Fatalf("expected inactive customer validation, got %v", err)
+	}
+}
+
+func int64Pointer(value int64) *int64 { return &value }
+
+func intStringPointer(value string) *string { return &value }
 
 func TestProductionServiceRequiresCompatibleActiveMachine(t *testing.T) {
 	repo := &fakeProductionRepository{

@@ -21,6 +21,37 @@ type MachineAssignmentData struct {
 	MachineTypeID int64
 }
 
+type DirectOrderCustomerData struct {
+	Type   string
+	Active bool
+}
+
+type DirectWorkReferenceData struct {
+	MachineTypeExists bool
+	MaterialActive    bool
+	MachineExists     bool
+	MachineActive     bool
+	MachineTypeID     *int64
+}
+
+type DirectWorkData struct {
+	Description           *string
+	RequiredMachineTypeID int64
+	MachineID             *int64
+	MaterialID            int64
+	PieceCount            int64
+	EstimatedMinutes      int64
+	EstimatedMaterial     string
+}
+
+type CreateDirectOrderData struct {
+	CustomerID    int64
+	Origin        string
+	SalesPlatform *string
+	Notes         *string
+	Works         []DirectWorkData
+}
+
 type FinishWorkData struct {
 	Result           string
 	ConsumedMaterial string
@@ -45,14 +76,16 @@ func (r *ProductionRepository) CreateOrder(ctx context.Context, quoteID int64) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var lockedQuoteID int64
+	var lockedQuoteID, customerID int64
 	var status string
+	var customerType string
 	if err := tx.QueryRow(ctx, `
-		SELECT q.id, e.codigo
+		SELECT q.id, e.codigo, q.cliente_id, c.tipo
 		FROM cotizaciones q
 		JOIN estados_cotizacion e ON e.id = q.estado_cotizacion_id
+		JOIN clientes c ON c.id = q.cliente_id
 		WHERE q.id = $1
-		FOR UPDATE OF q`, quoteID).Scan(&lockedQuoteID, &status); err != nil {
+		FOR UPDATE OF q`, quoteID).Scan(&lockedQuoteID, &status, &customerID, &customerType); err != nil {
 		return models.Order{}, translateError(err)
 	}
 	if status != "ACEPTADA" {
@@ -61,9 +94,9 @@ func (r *ProductionRepository) CreateOrder(ctx context.Context, quoteID int64) (
 
 	var orderID int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO pedidos (cotizacion_id)
-		VALUES ($1)
-		RETURNING id`, quoteID).Scan(&orderID); err != nil {
+		INSERT INTO pedidos (cotizacion_id, cliente_id, origen)
+		VALUES ($1, $2, CASE WHEN $3 = 'EMPRESA' THEN 'EMPRESA' ELSE 'CLIENTE' END)
+		RETURNING id`, quoteID, customerID, customerType).Scan(&orderID); err != nil {
 		return models.Order{}, translateError(err)
 	}
 	tag, err := tx.Exec(ctx, `
@@ -90,18 +123,74 @@ func (r *ProductionRepository) CreateOrder(ctx context.Context, quoteID int64) (
 	return r.GetOrder(ctx, orderID)
 }
 
+func (r *ProductionRepository) GetDirectOrderCustomerData(ctx context.Context, customerID int64) (DirectOrderCustomerData, error) {
+	var data DirectOrderCustomerData
+	err := r.db.QueryRow(ctx, `SELECT tipo, activo FROM clientes WHERE id = $1`, customerID).Scan(&data.Type, &data.Active)
+	return data, translateError(err)
+}
+
+func (r *ProductionRepository) GetDirectWorkReferenceData(ctx context.Context, machineTypeID, materialID int64, machineID *int64) (DirectWorkReferenceData, error) {
+	var data DirectWorkReferenceData
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			EXISTS (SELECT 1 FROM tipos_maquina WHERE id = $1),
+			COALESCE((SELECT activo FROM materiales WHERE id = $2), false),
+			$3::bigint IS NULL OR EXISTS (SELECT 1 FROM maquinas WHERE id = $3),
+			COALESCE((SELECT activa FROM maquinas WHERE id = $3), false),
+			(SELECT tipo_maquina_id FROM maquinas WHERE id = $3)`,
+		machineTypeID, materialID, machineID).Scan(
+		&data.MachineTypeExists, &data.MaterialActive, &data.MachineExists,
+		&data.MachineActive, &data.MachineTypeID,
+	)
+	return data, err
+}
+
+func (r *ProductionRepository) CreateDirectOrder(ctx context.Context, data CreateDirectOrderData) (models.Order, error) {
+	tx, err := r.transactions.Begin(ctx)
+	if err != nil {
+		return models.Order{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var orderID int64
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO pedidos (cliente_id, origen, plataforma_venta, notas)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id`, data.CustomerID, data.Origin, data.SalesPlatform, data.Notes).Scan(&orderID); err != nil {
+		return models.Order{}, translateError(err)
+	}
+	for _, work := range data.Works {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO trabajos (
+				pedido_id, tipo_maquina_id_requerido, maquina_id, material_id,
+				descripcion, cantidad_piezas, duracion_estimada_minutos,
+				material_estimado_gramos
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			orderID, work.RequiredMachineTypeID, work.MachineID, work.MaterialID,
+			work.Description, work.PieceCount, work.EstimatedMinutes,
+			work.EstimatedMaterial); err != nil {
+			return models.Order{}, translateError(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.Order{}, err
+	}
+	return r.GetOrder(ctx, orderID)
+}
+
 func (r *ProductionRepository) ListOrders(ctx context.Context, filters OrderFilters) ([]models.Order, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT p.id, p.cotizacion_id, q.cliente_id, c.nombre, p.estado,
+		SELECT p.id, p.cotizacion_id, p.cliente_id, c.nombre, c.tipo,
+			p.origen, p.plataforma_venta, p.notas, p.estado,
 			COUNT(t.id), COUNT(t.id) FILTER (WHERE t.estado = 'COMPLETADO'),
 			p.fecha_creacion, p.fecha_actualizacion
 		FROM pedidos p
-		JOIN cotizaciones q ON q.id = p.cotizacion_id
-		JOIN clientes c ON c.id = q.cliente_id
+		JOIN clientes c ON c.id = p.cliente_id
 		LEFT JOIN trabajos t ON t.pedido_id = p.id
-		WHERE ($1::bigint IS NULL OR q.cliente_id = $1)
+		WHERE ($1::bigint IS NULL OR p.cliente_id = $1)
 			AND ($2::text IS NULL OR p.estado = $2)
-		GROUP BY p.id, q.cliente_id, c.nombre
+		GROUP BY p.id, c.nombre, c.tipo
 		ORDER BY p.fecha_creacion DESC, p.id DESC`, filters.CustomerID, filters.Status)
 	if err != nil {
 		return nil, err
@@ -120,15 +209,15 @@ func (r *ProductionRepository) ListOrders(ctx context.Context, filters OrderFilt
 
 func (r *ProductionRepository) GetOrder(ctx context.Context, id int64) (models.Order, error) {
 	order, err := scanOrder(r.db.QueryRow(ctx, `
-		SELECT p.id, p.cotizacion_id, q.cliente_id, c.nombre, p.estado,
+		SELECT p.id, p.cotizacion_id, p.cliente_id, c.nombre, c.tipo,
+			p.origen, p.plataforma_venta, p.notas, p.estado,
 			COUNT(t.id), COUNT(t.id) FILTER (WHERE t.estado = 'COMPLETADO'),
 			p.fecha_creacion, p.fecha_actualizacion
 		FROM pedidos p
-		JOIN cotizaciones q ON q.id = p.cotizacion_id
-		JOIN clientes c ON c.id = q.cliente_id
+		JOIN clientes c ON c.id = p.cliente_id
 		LEFT JOIN trabajos t ON t.pedido_id = p.id
 		WHERE p.id = $1
-		GROUP BY p.id, q.cliente_id, c.nombre`, id))
+		GROUP BY p.id, c.nombre, c.tipo`, id))
 	if err != nil {
 		return models.Order{}, translateError(err)
 	}
@@ -375,6 +464,7 @@ func (r *ProductionRepository) listAttempts(ctx context.Context, workID int64) (
 func scanOrder(row scanner) (models.Order, error) {
 	var order models.Order
 	err := row.Scan(&order.ID, &order.QuoteID, &order.CustomerID, &order.CustomerName,
+		&order.CustomerType, &order.Origin, &order.SalesPlatform, &order.Notes,
 		&order.Status, &order.WorkCount, &order.CompletedCount, &order.CreationDate, &order.LastUpdatedAt)
 	return order, err
 }

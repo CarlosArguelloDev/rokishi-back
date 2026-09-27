@@ -79,6 +79,7 @@ func New(dependencies Dependencies) http.Handler {
 
 	production := handlers.NewProductionHandler(dependencies.Production)
 	r.Post("/api/cotizaciones/{id}/pedido", production.CreateOrder)
+	r.Post("/api/pedidos", production.CreateDirectOrder)
 	r.Get("/api/pedidos", production.ListOrders)
 	r.Get("/api/pedidos/{id}", production.GetOrder)
 	r.Patch("/api/trabajos/{id}/asignacion", production.AssignMachine)

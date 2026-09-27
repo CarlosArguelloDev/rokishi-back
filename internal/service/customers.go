@@ -11,6 +11,7 @@ import (
 )
 
 type CreateCustomerInput struct {
+	Type  string
 	Name  string
 	Email *string
 	Phone *string
@@ -18,6 +19,7 @@ type CreateCustomerInput struct {
 }
 
 type UpdateCustomerInput struct {
+	Type   Field[string]
 	Name   Field[string]
 	Email  Field[string]
 	Phone  Field[string]
@@ -46,8 +48,12 @@ func NewCustomerService(repository customerRepository) *CustomerService {
 }
 
 func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput) (models.Customer, error) {
+	customerType := strings.ToUpper(strings.TrimSpace(input.Type))
+	if customerType == "" {
+		customerType = "PERSONA"
+	}
 	customer := models.Customer{
-		Name: strings.TrimSpace(input.Name), Email: cleanNullable(input.Email),
+		Type: customerType, Name: strings.TrimSpace(input.Name), Email: cleanNullable(input.Email),
 		Phone: cleanNullable(input.Phone), Notes: cleanNullable(input.Notes), Active: true,
 	}
 	if err := validateCustomer(customer); err != nil {
@@ -81,7 +87,7 @@ func (s *CustomerService) Get(ctx context.Context, id int64) (models.Customer, e
 }
 
 func (s *CustomerService) Update(ctx context.Context, id int64, input UpdateCustomerInput) (models.Customer, error) {
-	if !input.Name.Set && !input.Email.Set && !input.Phone.Set && !input.Notes.Set && !input.Active.Set {
+	if !input.Type.Set && !input.Name.Set && !input.Email.Set && !input.Phone.Set && !input.Notes.Set && !input.Active.Set {
 		return models.Customer{}, &ValidationError{Message: "Debes proporcionar al menos un campo"}
 	}
 	customer, err := s.repository.Get(ctx, id)
@@ -93,6 +99,12 @@ func (s *CustomerService) Update(ctx context.Context, id int64, input UpdateCust
 			return models.Customer{}, requiredField("nombre")
 		}
 		customer.Name = strings.TrimSpace(*input.Name.Value)
+	}
+	if input.Type.Set {
+		if input.Type.Value == nil {
+			return models.Customer{}, requiredField("tipo")
+		}
+		customer.Type = strings.ToUpper(strings.TrimSpace(*input.Type.Value))
 	}
 	if input.Email.Set {
 		customer.Email = cleanNullable(input.Email.Value)
@@ -117,6 +129,9 @@ func (s *CustomerService) Update(ctx context.Context, id int64, input UpdateCust
 }
 
 func validateCustomer(customer models.Customer) error {
+	if customer.Type != "PERSONA" && customer.Type != "EMPRESA" {
+		return &ValidationError{Message: "El campo tipo debe ser PERSONA o EMPRESA"}
+	}
 	if customer.Name == "" {
 		return requiredField("nombre")
 	}

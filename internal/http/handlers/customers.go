@@ -24,6 +24,7 @@ func NewCustomerHandler(service CustomerService) *CustomerHandler {
 }
 
 type createCustomerRequest struct {
+	Type  string  `json:"tipo"`
 	Name  string  `json:"nombre"`
 	Email *string `json:"correo"`
 	Phone *string `json:"telefono"`
@@ -31,6 +32,7 @@ type createCustomerRequest struct {
 }
 
 type updateCustomerRequest struct {
+	Type   optional[string] `json:"tipo"`
 	Name   optional[string] `json:"nombre"`
 	Email  optional[string] `json:"correo"`
 	Phone  optional[string] `json:"telefono"`
@@ -45,7 +47,7 @@ func (h *CustomerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	customer, err := h.service.Create(r.Context(), service.CreateCustomerInput{
-		Name: request.Name, Email: request.Email, Phone: request.Phone, Notes: request.Notes,
+		Type: request.Type, Name: request.Name, Email: request.Email, Phone: request.Phone, Notes: request.Notes,
 	})
 	if err != nil {
 		writeCatalogError(w, err, "customer_conflict", "El cliente ya existe", "Cliente no encontrado")
@@ -96,7 +98,7 @@ func (h *CustomerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	customer, err := h.service.Update(r.Context(), id, service.UpdateCustomerInput{
-		Name: toField(request.Name), Email: toField(request.Email), Phone: toField(request.Phone),
+		Type: toField(request.Type), Name: toField(request.Name), Email: toField(request.Email), Phone: toField(request.Phone),
 		Notes: toField(request.Notes), Active: toField(request.Active),
 	})
 	if err != nil {

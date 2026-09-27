@@ -18,15 +18,19 @@ func (fakeProductionService) CreateOrder(_ context.Context, quoteID int64) (mode
 	if quoteID == 99 {
 		return models.Order{}, service.ErrConflict
 	}
-	return models.Order{ID: 4, QuoteID: quoteID, Status: "PENDIENTE", WorkCount: 1}, nil
+	return models.Order{ID: 4, QuoteID: productionQuoteID(quoteID), Status: "PENDIENTE", WorkCount: 1}, nil
+}
+
+func (fakeProductionService) CreateDirectOrder(_ context.Context, input service.CreateDirectOrderInput) (models.Order, error) {
+	return models.Order{ID: 5, CustomerID: input.CustomerID, Origin: "PLATAFORMA", Status: "PENDIENTE", WorkCount: int64(len(input.Works))}, nil
 }
 
 func (fakeProductionService) ListOrders(context.Context, service.OrderFilters) ([]models.Order, error) {
-	return []models.Order{{ID: 4, QuoteID: 7, Status: "PENDIENTE"}}, nil
+	return []models.Order{{ID: 4, QuoteID: productionQuoteID(7), Status: "PENDIENTE"}}, nil
 }
 
 func (fakeProductionService) GetOrder(_ context.Context, id int64) (models.Order, error) {
-	return models.Order{ID: id, QuoteID: 7, Status: "EN_PRODUCCION", Works: []models.Work{}}, nil
+	return models.Order{ID: id, QuoteID: productionQuoteID(7), Status: "EN_PRODUCCION", Works: []models.Work{}}, nil
 }
 
 func (fakeProductionService) AssignMachine(_ context.Context, workID, machineID int64) (models.Work, error) {
@@ -52,6 +56,7 @@ func TestProductionEndpoints(t *testing.T) {
 		contains                 string
 	}{
 		{"create order", http.MethodPost, "/api/cotizaciones/7/pedido", "", http.StatusCreated, `"cotizacion_id":7`},
+		{"create direct order", http.MethodPost, "/api/pedidos", `{"cliente_id":3,"plataforma_venta":"Etsy","trabajos":[{"tipo_maquina_id":2,"material_id":4,"cantidad_piezas":1,"duracion_estimada_minutos":60,"material_estimado_gramos":25}]}`, http.StatusCreated, `"origen":"PLATAFORMA"`},
 		{"duplicate order", http.MethodPost, "/api/cotizaciones/99/pedido", "", http.StatusConflict, `"code":"order_exists"`},
 		{"list orders", http.MethodGet, "/api/pedidos?estado=PENDIENTE", "", http.StatusOK, `"id":4`},
 		{"get order", http.MethodGet, "/api/pedidos/4", "", http.StatusOK, `"estado":"EN_PRODUCCION"`},
@@ -74,3 +79,5 @@ func TestProductionEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func productionQuoteID(value int64) *int64 { return &value }

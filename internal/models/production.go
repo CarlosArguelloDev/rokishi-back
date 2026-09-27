@@ -7,9 +7,13 @@ import (
 
 type Order struct {
 	ID             int64     `json:"id"`
-	QuoteID        int64     `json:"cotizacion_id"`
+	QuoteID        *int64    `json:"cotizacion_id"`
 	CustomerID     int64     `json:"cliente_id"`
 	CustomerName   string    `json:"cliente_nombre"`
+	CustomerType   string    `json:"cliente_tipo"`
+	Origin         string    `json:"origen"`
+	SalesPlatform  *string   `json:"plataforma_venta"`
+	Notes          *string   `json:"notas"`
 	Status         string    `json:"estado"`
 	WorkCount      int64     `json:"cantidad_trabajos"`
 	CompletedCount int64     `json:"trabajos_completados"`
@@ -21,7 +25,7 @@ type Order struct {
 type Work struct {
 	ID                    int64         `json:"id"`
 	OrderID               int64         `json:"pedido_id"`
-	QuoteConceptID        int64         `json:"concepto_cotizacion_id"`
+	QuoteConceptID        *int64        `json:"concepto_cotizacion_id"`
 	RequiredMachineTypeID int64         `json:"tipo_maquina_id_requerido"`
 	RequiredMachineType   string        `json:"tipo_maquina_requerido"`
 	MachineID             *int64        `json:"maquina_id"`

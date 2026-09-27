@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,8 +29,28 @@ type FinishWorkInput struct {
 	Notes            *string
 }
 
+type CreateDirectWorkInput struct {
+	Description           *string
+	RequiredMachineTypeID int64
+	MachineID             *int64
+	MaterialID            int64
+	PieceCount            int64
+	EstimatedMinutes      int64
+	EstimatedMaterial     string
+}
+
+type CreateDirectOrderInput struct {
+	CustomerID    int64
+	SalesPlatform *string
+	Notes         *string
+	Works         []CreateDirectWorkInput
+}
+
 type productionRepository interface {
 	CreateOrder(context.Context, int64) (models.Order, error)
+	GetDirectOrderCustomerData(context.Context, int64) (repository.DirectOrderCustomerData, error)
+	GetDirectWorkReferenceData(context.Context, int64, int64, *int64) (repository.DirectWorkReferenceData, error)
+	CreateDirectOrder(context.Context, repository.CreateDirectOrderData) (models.Order, error)
 	ListOrders(context.Context, repository.OrderFilters) ([]models.Order, error)
 	GetOrder(context.Context, int64) (models.Order, error)
 	GetWork(context.Context, int64) (models.Work, error)
@@ -63,6 +84,97 @@ func (s *ProductionService) CreateOrder(ctx context.Context, quoteID int64) (mod
 	default:
 		return order, mapRepositoryError(err)
 	}
+}
+
+func (s *ProductionService) CreateDirectOrder(ctx context.Context, input CreateDirectOrderInput) (models.Order, error) {
+	if input.CustomerID < 1 {
+		return models.Order{}, &ValidationError{Message: "El identificador de cliente debe ser un entero positivo"}
+	}
+	customer, err := s.repository.GetDirectOrderCustomerData(ctx, input.CustomerID)
+	if err != nil {
+		return models.Order{}, mapRepositoryError(err)
+	}
+	if !customer.Active {
+		return models.Order{}, &ValidationError{Message: "El cliente seleccionado esta inactivo"}
+	}
+	if len(input.Works) == 0 || len(input.Works) > 50 {
+		return models.Order{}, &ValidationError{Message: "El pedido debe incluir entre 1 y 50 trabajos"}
+	}
+
+	platform := cleanNullable(input.SalesPlatform)
+	if platform != nil && utf8.RuneCountInString(*platform) > 100 {
+		return models.Order{}, maxLength("plataforma_venta", 100)
+	}
+	origin := "CLIENTE"
+	if customer.Type == "EMPRESA" {
+		origin = "EMPRESA"
+	}
+	if platform != nil {
+		origin = "PLATAFORMA"
+	}
+	notes := cleanNullable(input.Notes)
+	if notes != nil && utf8.RuneCountInString(*notes) > 2000 {
+		return models.Order{}, maxLength("notas", 2000)
+	}
+
+	works := make([]repository.DirectWorkData, 0, len(input.Works))
+	for index, inputWork := range input.Works {
+		fieldPrefix := "trabajos[" + strconv.Itoa(index) + "]"
+		if inputWork.RequiredMachineTypeID < 1 || inputWork.MaterialID < 1 {
+			return models.Order{}, &ValidationError{Message: fieldPrefix + " requiere tipo de maquina y material validos"}
+		}
+		if inputWork.MachineID != nil && *inputWork.MachineID < 1 {
+			return models.Order{}, &ValidationError{Message: fieldPrefix + ".maquina_id debe ser un entero positivo"}
+		}
+		if inputWork.PieceCount < 1 || inputWork.PieceCount > 1000000 {
+			return models.Order{}, &ValidationError{Message: fieldPrefix + ".cantidad_piezas debe estar entre 1 y 1000000"}
+		}
+		if inputWork.EstimatedMinutes < 1 || inputWork.EstimatedMinutes > 5256000 {
+			return models.Order{}, &ValidationError{Message: fieldPrefix + ".duracion_estimada_minutos debe estar entre 1 y 5256000"}
+		}
+		estimatedMaterial, err := parseProductionDecimal(inputWork.EstimatedMaterial, fieldPrefix+".material_estimado_gramos")
+		if err != nil {
+			return models.Order{}, err
+		}
+		parsedMaterial, _ := new(big.Rat).SetString(estimatedMaterial)
+		if parsedMaterial.Sign() <= 0 {
+			return models.Order{}, &ValidationError{Message: "El campo " + fieldPrefix + ".material_estimado_gramos debe ser mayor a cero"}
+		}
+		description := cleanNullable(inputWork.Description)
+		if description != nil && utf8.RuneCountInString(*description) > 200 {
+			return models.Order{}, maxLength(fieldPrefix+".descripcion", 200)
+		}
+
+		references, err := s.repository.GetDirectWorkReferenceData(ctx, inputWork.RequiredMachineTypeID, inputWork.MaterialID, inputWork.MachineID)
+		if err != nil {
+			return models.Order{}, mapRepositoryError(err)
+		}
+		if !references.MachineTypeExists {
+			return models.Order{}, &ValidationError{Message: fieldPrefix + " usa un tipo de maquina inexistente"}
+		}
+		if !references.MaterialActive {
+			return models.Order{}, &ValidationError{Message: fieldPrefix + " usa un material inexistente o inactivo"}
+		}
+		if inputWork.MachineID != nil {
+			if !references.MachineExists || !references.MachineActive {
+				return models.Order{}, &ValidationError{Message: fieldPrefix + " usa una maquina inexistente o inactiva"}
+			}
+			if references.MachineTypeID == nil || *references.MachineTypeID != inputWork.RequiredMachineTypeID {
+				return models.Order{}, &ValidationError{Message: fieldPrefix + " usa una maquina incompatible con el tipo requerido"}
+			}
+		}
+		works = append(works, repository.DirectWorkData{
+			Description: description, RequiredMachineTypeID: inputWork.RequiredMachineTypeID,
+			MachineID: inputWork.MachineID, MaterialID: inputWork.MaterialID,
+			PieceCount: inputWork.PieceCount, EstimatedMinutes: inputWork.EstimatedMinutes,
+			EstimatedMaterial: estimatedMaterial,
+		})
+	}
+
+	order, err := s.repository.CreateDirectOrder(ctx, repository.CreateDirectOrderData{
+		CustomerID: input.CustomerID, Origin: origin, SalesPlatform: platform, Notes: notes, Works: works,
+	})
+	return order, mapRepositoryError(err)
 }
 
 func (s *ProductionService) ListOrders(ctx context.Context, filters OrderFilters) ([]models.Order, error) {
