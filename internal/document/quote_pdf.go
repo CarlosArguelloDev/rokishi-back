@@ -63,11 +63,12 @@ func (d *quoteDocument) render() error {
 	if err := d.drawHeader(); err != nil {
 		return err
 	}
-	if err := d.drawInformation(); err != nil {
+	informationBottom, err := d.drawInformation()
+	if err != nil {
 		return err
 	}
 
-	y := 238.0
+	y := informationBottom + 28
 	if err := d.sectionTitle("DETALLE DE LA COTIZACIÓN", y); err != nil {
 		return err
 	}
@@ -186,22 +187,65 @@ func (d *quoteDocument) drawHeader() error {
 	return d.cell(212, 13, "Fecha: "+d.quote.CreationDate.Format("02/01/2006")+"   |   Vigencia: "+strconv.Itoa(d.options.ValidityDays)+" días", gopdf.Right|gopdf.Middle)
 }
 
-func (d *quoteDocument) drawInformation() error {
+func (d *quoteDocument) drawInformation() (float64, error) {
 	const y = 118.0
-	d.pdf.SetFillColor(247, 247, 251)
-	d.pdf.RectFromUpperLeftWithStyle(margin, y, 250, 92, "F")
-	d.pdf.RectFromUpperLeftWithStyle(314, y, 250, 92, "F")
-	if err := d.infoBlock(margin+14, y+12, "COTIZADO PARA", customerLines(d.quote)); err != nil {
-		return err
+	customer, err := d.prepareInfoLines(customerLines(d.quote), true)
+	if err != nil {
+		return 0, err
 	}
-	return d.infoBlock(328, y+12, "CONDICIONES DE PAGO", []string{
+	payment, err := d.prepareInfoLines([]string{
 		"Anticipo: " + d.options.Deposit,
 		"Saldo: " + d.options.Balance,
 		"Forma de pago: " + d.options.PaymentMethod,
-	})
+	}, false)
+	if err != nil {
+		return 0, err
+	}
+	lineCount := len(customer)
+	if len(payment) > lineCount {
+		lineCount = len(payment)
+	}
+	height := maxFloat(92, 42+float64(lineCount)*13)
+	d.pdf.SetFillColor(247, 247, 251)
+	d.pdf.RectFromUpperLeftWithStyle(margin, y, 250, height, "F")
+	d.pdf.RectFromUpperLeftWithStyle(314, y, 250, height, "F")
+	if err := d.infoBlock(margin+14, y+12, "COTIZADO PARA", customer); err != nil {
+		return 0, err
+	}
+	if err := d.infoBlock(328, y+12, "CONDICIONES DE PAGO", payment); err != nil {
+		return 0, err
+	}
+	return y + height, nil
 }
 
-func (d *quoteDocument) infoBlock(x, y float64, heading string, lines []string) error {
+type infoLine struct {
+	text string
+	bold bool
+}
+
+func (d *quoteDocument) prepareInfoLines(values []string, firstBold bool) ([]infoLine, error) {
+	result := make([]infoLine, 0, len(values))
+	for index, value := range values {
+		bold := firstBold && index == 0
+		font := fontBody
+		if bold {
+			font = fontBold
+		}
+		if err := d.setFont(font, 8.5, 67, 71, 85); err != nil {
+			return nil, err
+		}
+		wrapped, err := d.wrap(value, 222)
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range wrapped {
+			result = append(result, infoLine{text: line, bold: bold})
+		}
+	}
+	return result, nil
+}
+
+func (d *quoteDocument) infoBlock(x, y float64, heading string, lines []infoLine) error {
 	if err := d.setFont(fontBold, 8, 85, 72, 221); err != nil {
 		return err
 	}
@@ -212,15 +256,15 @@ func (d *quoteDocument) infoBlock(x, y float64, heading string, lines []string) 
 	for index, line := range lines {
 		font := fontBody
 		color := [3]uint8{67, 71, 85}
-		if index == 0 && heading == "COTIZADO PARA" {
+		if line.bold {
 			font = fontBold
 			color = [3]uint8{34, 37, 48}
 		}
-		if err := d.setFont(font, 9, color[0], color[1], color[2]); err != nil {
+		if err := d.setFont(font, 8.5, color[0], color[1], color[2]); err != nil {
 			return err
 		}
-		d.pdf.SetXY(x, y+18+float64(index)*17)
-		if err := d.cell(222, 13, line, gopdf.Left|gopdf.Middle); err != nil {
+		d.pdf.SetXY(x, y+18+float64(index)*13)
+		if err := d.cell(222, 12, line.text, gopdf.Left|gopdf.Middle); err != nil {
 			return err
 		}
 	}
@@ -418,23 +462,74 @@ func (d *quoteDocument) wrap(text string, width float64) ([]string, error) {
 			lines = append(lines, "")
 			continue
 		}
-		current := words[0]
-		for _, word := range words[1:] {
-			candidate := current + " " + word
-			measured, err := d.pdf.MeasureTextWidth(candidate)
+		current := ""
+		for _, word := range words {
+			wordParts, err := d.splitWord(word, width)
 			if err != nil {
 				return nil, err
 			}
-			if measured <= width {
-				current = candidate
-				continue
+			for partIndex, part := range wordParts {
+				if partIndex > 0 {
+					if current != "" {
+						lines = append(lines, current)
+					}
+					current = part
+					continue
+				}
+				candidate := part
+				if current != "" {
+					candidate = current + " " + part
+				}
+				measured, err := d.pdf.MeasureTextWidth(candidate)
+				if err != nil {
+					return nil, err
+				}
+				if measured <= width {
+					current = candidate
+					continue
+				}
+				if current != "" {
+					lines = append(lines, current)
+				}
+				current = part
 			}
-			lines = append(lines, current)
-			current = word
 		}
-		lines = append(lines, current)
+		if current != "" {
+			lines = append(lines, current)
+		}
 	}
 	return lines, nil
+}
+
+func (d *quoteDocument) splitWord(word string, width float64) ([]string, error) {
+	measured, err := d.pdf.MeasureTextWidth(word)
+	if err != nil {
+		return nil, err
+	}
+	if measured <= width {
+		return []string{word}, nil
+	}
+	parts := make([]string, 0, 2)
+	current := ""
+	for _, character := range []rune(word) {
+		candidate := current + string(character)
+		measured, err := d.pdf.MeasureTextWidth(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if measured <= width {
+			current = candidate
+			continue
+		}
+		if current != "" {
+			parts = append(parts, current)
+		}
+		current = string(character)
+	}
+	if current != "" {
+		parts = append(parts, current)
+	}
+	return parts, nil
 }
 
 func customerLines(quote models.Quote) []string {

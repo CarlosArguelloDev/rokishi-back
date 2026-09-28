@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"rokishi-back/internal/models"
 	"rokishi-back/internal/repository"
@@ -19,6 +20,19 @@ type fakeQuoteRepository struct {
 	customerExists bool
 	changedStatus  string
 	err            error
+}
+
+type fakeQuotePDFGenerator struct {
+	quote   models.Quote
+	options models.QuotePDFOptions
+	content []byte
+	err     error
+}
+
+func (f *fakeQuotePDFGenerator) Generate(quote models.Quote, options models.QuotePDFOptions) ([]byte, error) {
+	f.quote = quote
+	f.options = options
+	return f.content, f.err
 }
 
 func (f *fakeQuoteRepository) GetCalculationData(context.Context, int64, int64) (repository.QuoteData, error) {
@@ -201,5 +215,39 @@ func TestQuoteServiceControlsStatusTransitions(t *testing.T) {
 	}
 	if _, err := quoteService.ChangeStatus(context.Background(), 7, "ACEPTADA"); !isValidationError(err) {
 		t.Fatalf("expected invalid direct transition, got %v", err)
+	}
+}
+
+func TestQuoteServiceGeneratesPDFWithDiscountAndTax(t *testing.T) {
+	expiration := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	repository := &fakeQuoteRepository{quote: models.Quote{
+		ID: 7, CustomerName: "Taller Norte", TotalSuggestedPrice: 10000,
+		CreationDate: time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC), ExpirationDate: &expiration,
+	}}
+	generator := &fakeQuotePDFGenerator{content: []byte("%PDF-test")}
+	quoteService := NewQuoteService(repository, generator)
+
+	document, err := quoteService.GeneratePDF(context.Background(), 7, GenerateQuotePDFInput{
+		ProductionTime: "5 días hábiles", DiscountPercentage: "10", TaxPercentage: "16",
+		Deposit: "50 %", Balance: "Contra entrega", PaymentMethod: "Transferencia",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Filename != "cotizacion-COT-000007.pdf" || string(document.Content) != "%PDF-test" {
+		t.Fatalf("documento inesperado: %+v", document)
+	}
+	if generator.options.ValidityDays != 15 || generator.options.DiscountAmount != 1000 ||
+		generator.options.TaxAmount != 1440 || generator.options.TotalAfterDiscountTax != 10440 {
+		t.Fatalf("totales del PDF inesperados: %+v", generator.options)
+	}
+}
+
+func TestQuoteServiceRejectsInvalidPDFPercentage(t *testing.T) {
+	repository := &fakeQuoteRepository{quote: models.Quote{ID: 7, TotalSuggestedPrice: 10000}}
+	quoteService := NewQuoteService(repository, &fakeQuotePDFGenerator{})
+	_, err := quoteService.GeneratePDF(context.Background(), 7, GenerateQuotePDFInput{DiscountPercentage: "100.01"})
+	if !isValidationError(err) {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }

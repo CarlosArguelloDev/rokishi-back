@@ -1,6 +1,7 @@
 package document
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -37,5 +38,36 @@ func TestQuotePDFGeneratorCreatesDocument(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(content), "%PDF-") {
 		t.Fatalf("encabezado PDF invalido: %q", content[:8])
+	}
+}
+
+func TestQuotePDFGeneratorPaginatesLongQuotes(t *testing.T) {
+	email := strings.Repeat("contacto", 20) + "@empresa.mx"
+	description := strings.Repeat("Pieza personalizada ", 8)
+	concepts := make([]models.QuoteConcept, 30)
+	for index := range concepts {
+		concepts[index] = models.QuoteConcept{
+			Description: &description, MaterialName: "PETG", MaterialGrams: json.Number("125"),
+			DurationMinutes: 180, PieceCount: 2, SuggestedPricePerPiece: 5000, SuggestedPrice: 10000,
+		}
+	}
+	quote := models.Quote{
+		ID: 8, CustomerName: strings.Repeat("Empresa ", 12), CustomerEmail: &email,
+		CreationDate:        time.Date(2026, time.September, 27, 10, 0, 0, 0, time.UTC),
+		TotalSuggestedPrice: 300000, Concepts: concepts,
+	}
+	options := models.QuotePDFOptions{
+		ValidityDays: 15, ProductionTime: strings.Repeat("Producción especial ", 5),
+		Deposit: strings.Repeat("Anticipo acordado ", 4), Balance: strings.Repeat("Saldo contra entrega ", 4),
+		PaymentMethod: strings.Repeat("Transferencia bancaria ", 4), TaxBasisPoints: 1600,
+		TaxAmount: 48000, TotalAfterDiscountTax: 348000,
+	}
+
+	content, err := NewQuotePDFGenerator().Generate(quote, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages := bytes.Count(content, []byte("/Type /Page\n")); pages < 2 {
+		t.Fatalf("se esperaba un PDF de varias paginas, se detectaron %d", pages)
 	}
 }

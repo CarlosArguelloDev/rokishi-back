@@ -42,7 +42,7 @@ func quoteSnapshotData() CreateQuoteData {
 func TestQuoteRepositoryCreateCommitsCompleteSnapshot(t *testing.T) {
 	now := time.Date(2026, 9, 27, 5, 0, 0, 0, time.UTC)
 	tx := &stateTestTransaction{rows: []scanner{
-		stateTestRow{values: []any{int64(7), int64(3), "Taller Norte", int64(1), "BORRADOR", "Borrador", nil, nil, int64(10675), int64(19675), now, now}},
+		stateTestRow{values: []any{int64(7), int64(3), "Taller Norte", nil, nil, int64(1), "BORRADOR", "Borrador", nil, nil, int64(10675), int64(19675), now, now}},
 		stateTestRow{values: []any{int64(11), now}},
 	}}
 	repository := &QuoteRepository{db: stateTestDB{}, transactions: quoteTestTransactionManager{tx: tx}}
@@ -65,7 +65,7 @@ func TestQuoteRepositoryCreateRollsBackOnConceptFailure(t *testing.T) {
 	now := time.Date(2026, 9, 27, 5, 0, 0, 0, time.UTC)
 	insertError := errors.New("concept insert failed")
 	tx := &stateTestTransaction{rows: []scanner{
-		stateTestRow{values: []any{int64(7), int64(3), "Taller Norte", int64(1), "BORRADOR", "Borrador", nil, nil, int64(10675), int64(19675), now, now}},
+		stateTestRow{values: []any{int64(7), int64(3), "Taller Norte", nil, nil, int64(1), "BORRADOR", "Borrador", nil, nil, int64(10675), int64(19675), now, now}},
 		stateTestRow{err: insertError},
 	}}
 	repository := &QuoteRepository{db: stateTestDB{}, transactions: quoteTestTransactionManager{tx: tx}}

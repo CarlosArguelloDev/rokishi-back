@@ -138,3 +138,24 @@ func TestPersistentQuoteEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestQuotePDFResponseHeaders(t *testing.T) {
+	handler := New(Dependencies{Quotes: fakeQuoteService{}})
+	request := httptest.NewRequest(http.MethodPost, "/api/cotizaciones/7/pdf", bytes.NewBufferString(`{"vigencia_dias":15}`))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("Content-Type = %q, want application/pdf", got)
+	}
+	if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="cotizacion-COT-000007.pdf"` {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
