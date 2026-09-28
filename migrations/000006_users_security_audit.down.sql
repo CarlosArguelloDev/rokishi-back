@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS auditoria;
+DROP TABLE IF EXISTS sesiones;
+DROP TABLE IF EXISTS usuarios;

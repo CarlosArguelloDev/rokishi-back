@@ -104,6 +104,9 @@ func TestCORS(t *testing.T) {
 		if got := response.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPut) {
 			t.Fatalf("allow methods = %q, want PUT", got)
 		}
+		if got := response.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+			t.Fatalf("allow credentials = %q, want true", got)
+		}
 	})
 
 	t.Run("rejects unknown origin", func(t *testing.T) {

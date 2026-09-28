@@ -10,4 +10,5 @@ var (
 	ErrInvalidStateTime   = errors.New("fecha de cambio invalida")
 	ErrInvalidOperation   = errors.New("operacion no permitida en el estado actual")
 	ErrMachineUnavailable = errors.New("maquina no disponible")
+	ErrSetupComplete      = errors.New("la configuracion inicial ya fue completada")
 )

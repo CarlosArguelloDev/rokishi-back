@@ -272,7 +272,25 @@ Consulta los registros cuando falle un despliegue:
 docker exec jenkins heroku logs --tail --app NOMBRE_DE_LA_APP
 ```
 
-## 12. Operacion y espacio en disco
+## 12. Crear el primer administrador
+
+El pipeline aplica la migracion `000006` antes de desplegar. Despues del primer despliegue consulta el codigo temporal que genera la API:
+
+```bash
+docker exec jenkins heroku logs --tail --app NOMBRE_DE_LA_APP
+```
+
+Busca el campo JSON `codigo_configuracion`, abre el frontend de Cloudflare Pages y completa el formulario inicial. No guardes ese codigo en Jenkins ni en GitHub: cambia cuando reinicia el proceso y deja de funcionar en cuanto se crea el primer usuario.
+
+Confirma que `CORS_ALLOWED_ORIGINS` contiene el dominio exacto de Pages, sin ruta ni diagonal final:
+
+```bash
+docker exec jenkins heroku config:set \
+  CORS_ALLOWED_ORIGINS=https://TU_PROYECTO.pages.dev \
+  --app NOMBRE_DE_LA_APP
+```
+
+## 13. Operacion y espacio en disco
 
 El pipeline elimina las etiquetas de imagen creadas durante cada build. Revisa el almacenamiento del Docker del host:
 
@@ -297,7 +315,7 @@ docker exec jenkins heroku ps --app NOMBRE_DE_LA_APP
 
 Debe existir una base Essential-0 y un solo proceso `web`.
 
-## 13. Problemas comunes
+## 14. Problemas comunes
 
 - **Jenkins aparece vacio:** el Compose no esta montando `/home/charli/jenkins-lab/jenkins_home`.
 - **`permission denied` en `docker.sock`:** confirma que Compose conserva `user: root` y monta `/var/run/docker.sock`.
@@ -308,6 +326,7 @@ Debe existir una base Essential-0 y un solo proceso `web`.
 - **La migracion queda `dirty`:** revisa la migracion fallida antes de usar `force`.
 - **Health devuelve 503:** la API arranco, pero PostgreSQL no esta disponible; revisa `heroku pg:info` y los logs.
 - **La primera peticion tarda:** un dyno Eco estaba dormido y esta despertando.
+- **El login responde bien pero vuelve a pedir acceso:** confirma que frontend y API usan HTTPS. Algunos bloqueadores rechazan cookies entre dominios distintos; la solucion estable es publicar ambos bajo subdominios del mismo dominio propio.
 
 ## Referencias
 

@@ -49,6 +49,7 @@ func run(logger *slog.Logger) error {
 	quoteRepository := repository.NewQuoteRepository(pool)
 	productionRepository := repository.NewProductionRepository(pool)
 	metricsRepository := repository.NewMetricsRepository(pool)
+	securityRepository := repository.NewSecurityRepository(pool)
 	locationService := service.NewLocationService(locationRepository)
 	machineTypeService := service.NewMachineTypeService(machineTypeRepository)
 	machineService := service.NewMachineService(machineRepository)
@@ -59,6 +60,15 @@ func run(logger *slog.Logger) error {
 	quoteService := service.NewQuoteService(quoteRepository)
 	productionService := service.NewProductionService(productionRepository)
 	metricsService := service.NewMetricsService(metricsRepository)
+	setupCode, err := service.GenerateSetupCode()
+	if err != nil {
+		return err
+	}
+	securityService, err := service.NewSecurityService(securityRepository, setupCode, 12*time.Hour)
+	if err != nil {
+		return err
+	}
+	logger.Warn("codigo de configuracion inicial; solo funciona mientras no existan usuarios", "codigo_configuracion", setupCode)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -79,6 +89,7 @@ func run(logger *slog.Logger) error {
 			Quotes:         quoteService,
 			Production:     productionService,
 			Metrics:        metricsService,
+			Security:       securityService,
 			AllowedOrigins: cfg.AllowedOrigins,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

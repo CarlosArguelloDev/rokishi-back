@@ -208,6 +208,14 @@ Las horas de cada estado son la interseccion entre sus periodos y el rango consu
 
 El material consumido y desperdiciado suma todos los intentos terminados. Los ingresos estimados usan `precio_sugerido` y la utilidad usa `precio_sugerido - subtotal` del concepto historico que origino cada trabajo completado. Los pedidos directos participan en las metricas operativas, pero se reportan como `trabajos_sin_datos_financieros`. Los periodos sin historial no se infieren. Esta fase no agrega migraciones ni almacena agregados.
 
+## Seguridad y usuarios (Fase 10)
+
+La migracion `000006` agrega usuarios, sesiones y auditoria. Todos los endpoints, excepto salud y autenticacion, requieren la cookie segura `rokishi_session`. Los roles disponibles son `ADMIN` y `OPERADOR`; solamente un administrador puede gestionar usuarios y consultar `GET /api/auditoria`.
+
+En el primer arranque la API imprime un `codigo_configuracion` de un solo uso en los logs. Abre el frontend, introduce ese codigo y crea el primer administrador. El codigo deja de funcionar en cuanto existe un usuario. Las contrasenas se almacenan con Argon2id y las sesiones como hashes SHA-256; nunca se devuelve el token en JSON.
+
+Para Cloudflare Pages configura `CORS_ALLOWED_ORIGINS` con el origen exacto del frontend. Las peticiones usan cookies `HttpOnly`, `Secure` y `SameSite=None`. Para máxima compatibilidad con bloqueadores de cookies de terceros, usa dominios propios del mismo sitio, por ejemplo `app.ejemplo.com` y `api.ejemplo.com`.
+
 ## Docker
 
 Construye la imagen desde la raiz del repositorio:
