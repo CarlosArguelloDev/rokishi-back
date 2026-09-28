@@ -54,6 +54,16 @@ func (fakeQuoteService) Get(_ context.Context, id int64) (models.Quote, error) {
 	return models.Quote{ID: id, CustomerID: 3, StatusID: 1, StatusCode: "BORRADOR", Concepts: []models.QuoteConcept{}}, nil
 }
 
+func (fakeQuoteService) GeneratePDF(_ context.Context, id int64, input service.GenerateQuotePDFInput) (models.QuotePDF, error) {
+	if id == 99 {
+		return models.QuotePDF{}, service.ErrNotFound
+	}
+	if input.ValidityDays < 0 {
+		return models.QuotePDF{}, &service.ValidationError{Message: "Vigencia invalida"}
+	}
+	return models.QuotePDF{Filename: "cotizacion-COT-000007.pdf", Content: []byte("%PDF-test")}, nil
+}
+
 func (fakeQuoteService) ListStatuses(context.Context) ([]models.QuoteStatus, error) {
 	return []models.QuoteStatus{{ID: 1, Code: "BORRADOR", Name: "Borrador"}}, nil
 }
@@ -108,6 +118,8 @@ func TestPersistentQuoteEndpoints(t *testing.T) {
 		{"list quotes", http.MethodGet, "/api/cotizaciones?cliente_id=3&estado=BORRADOR", "", http.StatusOK, `"id":7`},
 		{"get quote", http.MethodGet, "/api/cotizaciones/7", "", http.StatusOK, `"estado_codigo":"BORRADOR"`},
 		{"missing quote", http.MethodGet, "/api/cotizaciones/99", "", http.StatusNotFound, `"code":"not_found"`},
+		{"generate PDF", http.MethodPost, "/api/cotizaciones/7/pdf", `{"vigencia_dias":15,"iva_porcentaje":16}`, http.StatusOK, "%PDF-test"},
+		{"missing PDF quote", http.MethodPost, "/api/cotizaciones/99/pdf", `{}`, http.StatusNotFound, `"code":"not_found"`},
 		{"list statuses", http.MethodGet, "/api/estados-cotizacion", "", http.StatusOK, `"codigo":"BORRADOR"`},
 		{"change status", http.MethodPost, "/api/cotizaciones/7/cambios-estado", `{"estado_codigo":"ENVIADA"}`, http.StatusOK, `"estado_codigo":"ENVIADA"`},
 		{"invalid transition", http.MethodPost, "/api/cotizaciones/7/cambios-estado", `{"estado_codigo":"ACEPTADA"}`, http.StatusUnprocessableEntity, `"code":"validation_failed"`},

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"rokishi-back/internal/models"
 	"rokishi-back/internal/service"
@@ -15,6 +16,7 @@ type QuoteService interface {
 	Create(context.Context, service.CreateQuoteInput) (models.Quote, error)
 	List(context.Context, service.QuoteFilters) ([]models.Quote, error)
 	Get(context.Context, int64) (models.Quote, error)
+	GeneratePDF(context.Context, int64, service.GenerateQuotePDFInput) (models.QuotePDF, error)
 	ListStatuses(context.Context) ([]models.QuoteStatus, error)
 	ChangeStatus(context.Context, int64, string) (models.Quote, error)
 }
@@ -53,6 +55,17 @@ type createQuoteRequest struct {
 
 type changeQuoteStatusRequest struct {
 	StatusCode string `json:"estado_codigo"`
+}
+
+type generateQuotePDFRequest struct {
+	ValidityDays       int         `json:"vigencia_dias"`
+	ProductionTime     string      `json:"tiempo_produccion"`
+	DiscountPercentage json.Number `json:"descuento_porcentaje"`
+	TaxPercentage      json.Number `json:"iva_porcentaje"`
+	Deposit            string      `json:"anticipo"`
+	Balance            string      `json:"saldo"`
+	PaymentMethod      string      `json:"forma_pago"`
+	Specifications     string      `json:"especificaciones"`
 }
 
 func (h *QuoteHandler) Calculate(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +142,34 @@ func (h *QuoteHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dataResponse[models.Quote]{Data: quote})
+}
+
+func (h *QuoteHandler) GeneratePDF(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var request generateQuotePDFRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_json", "El cuerpo JSON no es valido")
+		return
+	}
+	document, err := h.service.GeneratePDF(r.Context(), id, service.GenerateQuotePDFInput{
+		ValidityDays: request.ValidityDays, ProductionTime: request.ProductionTime,
+		DiscountPercentage: request.DiscountPercentage.String(), TaxPercentage: request.TaxPercentage.String(),
+		Deposit: request.Deposit, Balance: request.Balance, PaymentMethod: request.PaymentMethod,
+		Specifications: request.Specifications,
+	})
+	if err != nil {
+		writeQuoteError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+document.Filename+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(document.Content)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(document.Content)
 }
 
 func (h *QuoteHandler) ListStatuses(w http.ResponseWriter, r *http.Request) {

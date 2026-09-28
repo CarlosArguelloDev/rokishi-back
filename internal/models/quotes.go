@@ -79,6 +79,8 @@ type Quote struct {
 	ID                  int64          `json:"id"`
 	CustomerID          int64          `json:"cliente_id"`
 	CustomerName        string         `json:"cliente_nombre"`
+	CustomerEmail       *string        `json:"cliente_correo"`
+	CustomerPhone       *string        `json:"cliente_telefono"`
 	StatusID            int64          `json:"estado_cotizacion_id"`
 	StatusCode          string         `json:"estado_codigo"`
 	StatusName          string         `json:"estado_nombre"`
@@ -89,4 +91,23 @@ type Quote struct {
 	CreationDate        time.Time      `json:"fecha_creacion"`
 	LastUpdatedAt       time.Time      `json:"fecha_actualizacion"`
 	Concepts            []QuoteConcept `json:"conceptos,omitempty"`
+}
+
+type QuotePDFOptions struct {
+	ValidityDays          int
+	ProductionTime        string
+	Deposit               string
+	Balance               string
+	PaymentMethod         string
+	Specifications        string
+	DiscountBasisPoints   int64
+	TaxBasisPoints        int64
+	DiscountAmount        Money
+	TaxAmount             Money
+	TotalAfterDiscountTax Money
+}
+
+type QuotePDF struct {
+	Filename string
+	Content  []byte
 }

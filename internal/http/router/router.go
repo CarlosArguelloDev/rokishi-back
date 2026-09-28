@@ -98,6 +98,7 @@ func New(dependencies Dependencies) http.Handler {
 		protected.Post("/api/cotizaciones", quotes.Create)
 		protected.Get("/api/cotizaciones", quotes.List)
 		protected.Get("/api/cotizaciones/{id}", quotes.Get)
+		protected.Post("/api/cotizaciones/{id}/pdf", quotes.GeneratePDF)
 		protected.Get("/api/estados-cotizacion", quotes.ListStatuses)
 		protected.Post("/api/cotizaciones/{id}/cambios-estado", quotes.ChangeStatus)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 )
 
 var decimalPattern = regexp.MustCompile(`^\d+(?:\.\d{1,3})?$`)
+var percentagePattern = regexp.MustCompile(`^\d+(?:\.\d{1,2})?$`)
 
 var quoteTransitions = map[string]map[string]bool{
 	"BORRADOR": {"ENVIADA": true, "CANCELADA": true},
@@ -58,6 +60,17 @@ type QuoteFilters struct {
 	StatusCode *string
 }
 
+type GenerateQuotePDFInput struct {
+	ValidityDays       int
+	ProductionTime     string
+	DiscountPercentage string
+	TaxPercentage      string
+	Deposit            string
+	Balance            string
+	PaymentMethod      string
+	Specifications     string
+}
+
 type quoteRepository interface {
 	GetCalculationData(context.Context, int64, int64) (repository.QuoteData, error)
 	ActiveCustomerExists(context.Context, int64) (bool, error)
@@ -68,12 +81,21 @@ type quoteRepository interface {
 	ChangeStatus(context.Context, int64, int64, string) (models.Quote, error)
 }
 
-type QuoteService struct {
-	repository quoteRepository
+type quotePDFGenerator interface {
+	Generate(models.Quote, models.QuotePDFOptions) ([]byte, error)
 }
 
-func NewQuoteService(repository quoteRepository) *QuoteService {
-	return &QuoteService{repository: repository}
+type QuoteService struct {
+	repository quoteRepository
+	pdf        quotePDFGenerator
+}
+
+func NewQuoteService(repository quoteRepository, generators ...quotePDFGenerator) *QuoteService {
+	service := &QuoteService{repository: repository}
+	if len(generators) > 0 {
+		service.pdf = generators[0]
+	}
+	return service
 }
 
 func (s *QuoteService) Calculate(ctx context.Context, input CalculateQuoteInput) (models.QuoteCalculation, error) {
@@ -171,6 +193,75 @@ func (s *QuoteService) Get(ctx context.Context, id int64) (models.Quote, error) 
 	}
 	quote, err := s.repository.Get(ctx, id)
 	return quote, mapRepositoryError(err)
+}
+
+func (s *QuoteService) GeneratePDF(ctx context.Context, id int64, input GenerateQuotePDFInput) (models.QuotePDF, error) {
+	if id < 1 {
+		return models.QuotePDF{}, &ValidationError{Message: "El identificador debe ser un entero positivo"}
+	}
+	quote, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return models.QuotePDF{}, mapRepositoryError(err)
+	}
+
+	validityDays := input.ValidityDays
+	if validityDays == 0 {
+		validityDays = defaultValidityDays(quote)
+	}
+	if validityDays < 1 || validityDays > 365 {
+		return models.QuotePDF{}, &ValidationError{Message: "La vigencia debe estar entre 1 y 365 dias"}
+	}
+	discountBasisPoints, err := parsePercentage(input.DiscountPercentage, "descuento_porcentaje", "0")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+	taxBasisPoints, err := parsePercentage(input.TaxPercentage, "iva_porcentaje", "16")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+
+	productionTime, err := quotePDFText(input.ProductionTime, "tiempo_produccion", 120, "Por acordar")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+	deposit, err := quotePDFText(input.Deposit, "anticipo", 80, "Por acordar")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+	balance, err := quotePDFText(input.Balance, "saldo", 80, "Por acordar")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+	paymentMethod, err := quotePDFText(input.PaymentMethod, "forma_pago", 80, "Por acordar")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+	specifications, err := quotePDFText(input.Specifications, "especificaciones", 1000, "")
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+
+	discountAmount := percentageOfMoney(quote.TotalSuggestedPrice, discountBasisPoints)
+	taxBase := quote.TotalSuggestedPrice - discountAmount
+	taxAmount := percentageOfMoney(taxBase, taxBasisPoints)
+	options := models.QuotePDFOptions{
+		ValidityDays: validityDays, ProductionTime: productionTime,
+		Deposit: deposit, Balance: balance, PaymentMethod: paymentMethod,
+		Specifications: specifications, DiscountBasisPoints: discountBasisPoints,
+		TaxBasisPoints: taxBasisPoints, DiscountAmount: discountAmount,
+		TaxAmount: taxAmount, TotalAfterDiscountTax: taxBase + taxAmount,
+	}
+	if s.pdf == nil {
+		return models.QuotePDF{}, errors.New("generador de PDF no configurado")
+	}
+	content, err := s.pdf.Generate(quote, options)
+	if err != nil {
+		return models.QuotePDF{}, err
+	}
+	return models.QuotePDF{
+		Filename: "cotizacion-COT-" + fmt.Sprintf("%06d", quote.ID) + ".pdf",
+		Content:  content,
+	}, nil
 }
 
 func (s *QuoteService) ListStatuses(ctx context.Context) ([]models.QuoteStatus, error) {
@@ -352,6 +443,54 @@ func divideMoney(value models.Money, divisor int64) models.Money {
 		quotient++
 	}
 	return models.Money(quotient)
+}
+
+func defaultValidityDays(quote models.Quote) int {
+	if quote.ExpirationDate == nil {
+		return 15
+	}
+	days := int(math.Ceil(quote.ExpirationDate.Sub(quote.CreationDate).Hours() / 24))
+	if days < 1 || days > 365 {
+		return 15
+	}
+	return days
+}
+
+func parsePercentage(value, field, fallback string) (int64, error) {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		cleaned = fallback
+	}
+	if !percentagePattern.MatchString(cleaned) {
+		return 0, &ValidationError{Message: "El campo " + field + " debe ser un porcentaje entre 0 y 100 con hasta 2 decimales"}
+	}
+	parsed, ok := new(big.Rat).SetString(cleaned)
+	if !ok || parsed.Sign() < 0 || parsed.Cmp(big.NewRat(100, 1)) > 0 {
+		return 0, &ValidationError{Message: "El campo " + field + " debe estar entre 0 y 100"}
+	}
+	scaled := new(big.Rat).Mul(parsed, big.NewRat(100, 1))
+	return new(big.Int).Quo(scaled.Num(), scaled.Denom()).Int64(), nil
+}
+
+func quotePDFText(value, field string, limit int, fallback string) (string, error) {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return fallback, nil
+	}
+	if utf8.RuneCountInString(cleaned) > limit {
+		return "", maxLength(field, limit)
+	}
+	return cleaned, nil
+}
+
+func percentageOfMoney(value models.Money, basisPoints int64) models.Money {
+	product := new(big.Int).Mul(big.NewInt(int64(value)), big.NewInt(basisPoints))
+	quotient, remainder := new(big.Int), new(big.Int)
+	quotient.QuoRem(product, big.NewInt(10000), remainder)
+	if new(big.Int).Mul(remainder, big.NewInt(2)).Cmp(big.NewInt(10000)) >= 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	return models.Money(quotient.Int64())
 }
 
 func missingConfiguration(message string) error {

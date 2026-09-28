@@ -141,7 +141,8 @@ func (r *QuoteRepository) Create(ctx context.Context, data CreateQuoteData) (mod
 			WHERE e.codigo = 'BORRADOR'
 			RETURNING *
 		)
-		SELECT i.id, i.cliente_id, c.nombre, i.estado_cotizacion_id, e.codigo, e.nombre,
+		SELECT i.id, i.cliente_id, c.nombre, c.correo, c.telefono,
+			i.estado_cotizacion_id, e.codigo, e.nombre,
 			i.fecha_vencimiento, i.notas, ROUND(i.costo_total * 100)::bigint,
 			ROUND(i.precio_sugerido_total * 100)::bigint, i.fecha_creacion, i.fecha_actualizacion
 		FROM inserted i
@@ -208,7 +209,8 @@ func (r *QuoteRepository) Create(ctx context.Context, data CreateQuoteData) (mod
 
 func (r *QuoteRepository) List(ctx context.Context, filters QuoteFilters) ([]models.Quote, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT q.id, q.cliente_id, c.nombre, q.estado_cotizacion_id, e.codigo, e.nombre,
+		SELECT q.id, q.cliente_id, c.nombre, c.correo, c.telefono,
+			q.estado_cotizacion_id, e.codigo, e.nombre,
 			q.fecha_vencimiento, q.notas, ROUND(q.costo_total * 100)::bigint,
 			ROUND(q.precio_sugerido_total * 100)::bigint, q.fecha_creacion, q.fecha_actualizacion
 		FROM cotizaciones q
@@ -235,7 +237,8 @@ func (r *QuoteRepository) List(ctx context.Context, filters QuoteFilters) ([]mod
 
 func (r *QuoteRepository) Get(ctx context.Context, id int64) (models.Quote, error) {
 	quote, err := scanQuote(r.db.QueryRow(ctx, `
-		SELECT q.id, q.cliente_id, c.nombre, q.estado_cotizacion_id, e.codigo, e.nombre,
+		SELECT q.id, q.cliente_id, c.nombre, c.correo, c.telefono,
+			q.estado_cotizacion_id, e.codigo, e.nombre,
 			q.fecha_vencimiento, q.notas, ROUND(q.costo_total * 100)::bigint,
 			ROUND(q.precio_sugerido_total * 100)::bigint, q.fecha_creacion, q.fecha_actualizacion
 		FROM cotizaciones q
@@ -302,7 +305,8 @@ func (r *QuoteRepository) ChangeStatus(ctx context.Context, id, currentStatusID 
 			WHERE q.id = $1 AND q.estado_cotizacion_id = $2 AND target.codigo = $3
 			RETURNING q.*
 		)
-		SELECT u.id, u.cliente_id, c.nombre, u.estado_cotizacion_id, e.codigo, e.nombre,
+		SELECT u.id, u.cliente_id, c.nombre, c.correo, c.telefono,
+			u.estado_cotizacion_id, e.codigo, e.nombre,
 			u.fecha_vencimiento, u.notas, ROUND(u.costo_total * 100)::bigint,
 			ROUND(u.precio_sugerido_total * 100)::bigint, u.fecha_creacion, u.fecha_actualizacion
 		FROM updated u
@@ -321,6 +325,8 @@ func scanQuote(row scanner) (models.Quote, error) {
 		&quote.ID,
 		&quote.CustomerID,
 		&quote.CustomerName,
+		&quote.CustomerEmail,
+		&quote.CustomerPhone,
 		&quote.StatusID,
 		&quote.StatusCode,
 		&quote.StatusName,

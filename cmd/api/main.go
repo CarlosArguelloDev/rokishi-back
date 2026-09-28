@@ -13,6 +13,7 @@ import (
 
 	"rokishi-back/internal/config"
 	"rokishi-back/internal/database"
+	"rokishi-back/internal/document"
 	"rokishi-back/internal/http/router"
 	"rokishi-back/internal/repository"
 	"rokishi-back/internal/service"
@@ -57,7 +58,7 @@ func run(logger *slog.Logger) error {
 	materialService := service.NewMaterialService(materialRepository)
 	rateService := service.NewRateService(rateRepository)
 	customerService := service.NewCustomerService(customerRepository)
-	quoteService := service.NewQuoteService(quoteRepository)
+	quoteService := service.NewQuoteService(quoteRepository, document.NewQuotePDFGenerator())
 	productionService := service.NewProductionService(productionRepository)
 	metricsService := service.NewMetricsService(metricsRepository)
 	setupCode, err := service.GenerateSetupCode()
